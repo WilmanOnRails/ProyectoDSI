@@ -1,2 +1,4 @@
 # ProyectoDSI
-Este proyecto para la clase de Diseño de sistema de Internet consiste en un sistema web que maneja la creación y auntomatizacion de presupuestos.
+
+
+<img width="1105" height="987" alt="image" src="https://github.com/user-attachments/assets/30bbf744-cca5-4ae1-b60b-a51e031ff57d" />
