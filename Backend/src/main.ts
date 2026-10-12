@@ -46,6 +46,15 @@ async function bootstrap() {
       'API para armar y automatizar presupuestos de construcción en Nicaragua (C$).',
     )
     .setVersion('1.0')
+    .addBearerAuth({
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'JWT',
+      in: 'header',
+      name: 'Authorization',
+      description: 'Enter your bearer token'
+    })
+    .addSecurityRequirements('bearer')
     .build();
   const documento = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, documento, {
