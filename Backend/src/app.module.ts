@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { ProjectsModule } from './projects/projects.module.js';
 import { ActivitiesModule } from './activities/activities.module.js';
 import { ApusModule } from './apus/apus.module.js';
+import { HistorialPreciosModule } from './historial-precios/historial-precios.module.js';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { ApusModule } from './apus/apus.module.js';
     ProjectsModule,
     ActivitiesModule,
     ApusModule,
+    HistorialPreciosModule,
   ],
   controllers: [HealthController],
 })
