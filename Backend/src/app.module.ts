@@ -9,6 +9,7 @@ import { ActivitiesModule } from './activities/activities.module.js';
 import { ApusModule } from './apus/apus.module.js';
 import { HistorialPreciosModule } from './historial-precios/historial-precios.module.js';
 import { ConfiguracionModule } from './configuracion/configuracion.module.js';
+import { RecursosModule } from './recursos/recursos.module.js';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { ConfiguracionModule } from './configuracion/configuracion.module.js';
     ApusModule,
     HistorialPreciosModule,
     ConfiguracionModule,
+    RecursosModule,
   ],
   controllers: [HealthController],
 })
