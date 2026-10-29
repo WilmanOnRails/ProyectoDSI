@@ -12,6 +12,7 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CambiarPrecioDto } from './dto/cambiar-precio.dto.js';
 import { CreateRecursoDto } from './dto/create-recurso.dto.js';
+import { ImportarRecursosDto } from './dto/importar-recursos.dto.js';
 import { QueryHistorialDto } from './dto/query-historial.dto.js';
 import { QueryRecursoDto } from './dto/query-recurso.dto.js';
 import { UpdateRecursoDto } from './dto/update-recurso.dto.js';
@@ -26,6 +27,15 @@ export class RecursosController {
   @ApiOperation({ summary: 'Crea un recurso y registra su precio inicial' })
   create(@Body() createRecursoDto: CreateRecursoDto) {
     return this.recursosService.create(createRecursoDto);
+  }
+
+  @Post('importar')
+  @ApiOperation({
+    summary:
+      'Importa recursos del scraping (crea o actualiza por proveedor + URL)',
+  })
+  importar(@Body() importarRecursosDto: ImportarRecursosDto) {
+    return this.recursosService.importar(importarRecursosDto);
   }
 
   @Get()
