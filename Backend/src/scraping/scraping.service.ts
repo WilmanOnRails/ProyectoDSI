@@ -5,18 +5,6 @@ import { chromium } from 'playwright';
 export class ScrapingService {
   private readonly logger = new Logger(ScrapingService.name);
 
-  // Categorías clave de Sinsa útiles para Ingeniería Civil y Construcción
-  private readonly categoriasConstruccion = [
-    'construccion',
-    'ferreteria',
-    'herramientas',
-    'pintura',
-    'plomeria',
-    'electrico',
-    'iluminacion',
-    'limpieza',
-  ];
-
   async ejecutarScraping(categoria: string) {
     const slugCategoria = (categoria || 'construccion').trim().toLowerCase();
     const urlDinamica = `https://www.sinsa.com.ni/${slugCategoria}`;
@@ -42,10 +30,12 @@ export class ScrapingService {
         timeout: 15000,
       });
 
+      const catActual = slugCategoria;
+
       const products = await page
         .locator('.vtex-search-result-3-x-galleryItem')
-        .evaluateAll((results) =>
-          Array.from(results).flatMap((e) => {
+        .evaluateAll((results, cat) => {
+          return Array.from(results).flatMap((e) => {
             const title =
               e
                 .querySelector(
@@ -67,16 +57,12 @@ export class ScrapingService {
                   .trim()
               : '';
 
-            // Limpieza inteligente de precio (si dice "De C$X Para C$Y", extrae Y)
             let precioNumerico = 0;
             if (rawPrice) {
-              // Buscar todos los montos con formato C$ o números con comas/puntos
               const matches = rawPrice.match(/C?\$?\s*([\d,]+\.\d{2})/g);
               if (matches && matches.length > 0) {
-                // Tomar el último precio encontrado (suele ser el precio "Para" / oferta)
                 const ultimoPrecioStr = matches[matches.length - 1];
-                const limpio = ultimoPrecioStr
-                  .replace(/[^0-9.]/g, '');
+                const limpio = ultimoPrecioStr.replace(/[^0-9.]/g, '');
                 precioNumerico = Number.parseFloat(limpio) || 0;
               } else {
                 const limpio = rawPrice.replace(/[^0-9.]/g, '');
@@ -102,13 +88,13 @@ export class ScrapingService {
                 precio: precioNumerico,
                 urlProducto: fullLink,
                 imagenUrl: img,
-                categoria: slugCategoria,
+                categoria: cat,
                 proveedor: 'SINSA',
                 unidad: 'Unidad',
               },
             ];
-          }),
-        );
+          });
+        }, catActual);
 
       return {
         categoria: slugCategoria,

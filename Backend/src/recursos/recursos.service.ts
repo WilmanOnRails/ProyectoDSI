@@ -319,15 +319,31 @@ export class RecursosService {
         }
 
         if (!existente.costoUnitario.equals(item.precio)) {
-          await this.cambiarPrecio(existente.id, {
-            precio: item.precio,
-            fuente: item.fuente ?? item.proveedor,
-            registradoPor: item.registradoPor,
-            proveedor: item.proveedor,
-            nombreProveedor: item.nombreProveedor ?? item.descripcion,
-            urlProducto: item.urlProducto,
-            imagenUrl: item.imagenUrl,
+          // Actualización directa del precio y el historial sin disparar recálculo de APU masivo en importación
+          await this.prisma.$transaction(async (tx) => {
+            await tx.historialPrecio.create({
+              data: {
+                recursoId: existente.id,
+                precio: item.precio,
+                fuente: item.fuente ?? item.proveedor,
+                registradoPor: item.registradoPor ?? null,
+              },
+            });
+
+            await tx.recurso.update({
+              where: { id: existente.id },
+              data: {
+                costoUnitario: item.precio,
+                fechaActualizacion: new Date(),
+                fuente: item.fuente ?? item.proveedor,
+                proveedor: item.proveedor,
+                nombreProveedor: item.nombreProveedor ?? item.descripcion,
+                urlProducto: item.urlProducto,
+                imagenUrl: item.imagenUrl,
+              },
+            });
           });
+
           await this.actualizarMetadatos(existente.id, item);
           resultado.actualizados++;
         } else {
