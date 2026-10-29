@@ -20,7 +20,10 @@ enum Rol {
   administrador
   presupuestista
   solo_lectura
+<<<<<<< HEAD
   ingeniero
+=======
+>>>>>>> ef5fac4aaf7d232f8d063b598e406df178983a13
 
   @@map("rol")
 }
@@ -36,6 +39,7 @@ model Recurso {
   fuente             String            @default("Manual")
   fechaActualizacion DateTime          @default(now()) @map("fecha_actualizacion")
   activo             Boolean           @default(true)
+<<<<<<< HEAD
   proveedor          String?
   urlProducto        String?           @map("url_producto")
   nombreProveedor    String?           @map("nombre_proveedor")
@@ -44,6 +48,11 @@ model Recurso {
   apuDetalles        ApuDetalle[]
 
   @@unique([proveedor, urlProducto])
+=======
+  historialPrecios   HistorialPrecio[]
+  apuDetalles        ApuDetalle[]
+
+>>>>>>> ef5fac4aaf7d232f8d063b598e406df178983a13
   @@map("recursos")
 }
 
@@ -100,7 +109,10 @@ model ApuCostoCache {
 
 model Proyecto {
   id            String        @id @default(uuid())
+<<<<<<< HEAD
   codigo        String?       @unique
+=======
+>>>>>>> ef5fac4aaf7d232f8d063b598e406df178983a13
   nombre        String
   cliente       String?
   ubicacion     String?
@@ -157,9 +169,14 @@ model Usuario {
   nombre       String
   email        String  @unique
   passwordHash String  @map("password_hash")
+<<<<<<< HEAD
   rol          Rol       @default(presupuestista)
   activo       Boolean   @default(true)
   ultimoAcceso DateTime? @map("ultimo_acceso")
+=======
+  rol          Rol     @default(presupuestista)
+  activo       Boolean @default(true)
+>>>>>>> ef5fac4aaf7d232f8d063b598e406df178983a13
 
   @@map("usuarios")
 }

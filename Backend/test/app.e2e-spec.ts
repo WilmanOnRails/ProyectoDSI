@@ -21,7 +21,7 @@ describe('AppModule (e2e)', () => {
       }),
     );
     await app.init();
-    //xd
+
   });
 
   it('GET /api/health responde ok', () => {
