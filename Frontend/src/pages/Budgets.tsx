@@ -1,24 +1,6 @@
+import { useEffect, useState } from "react";
+import { FileSpreadsheet } from "lucide-react";
+import api from "../services/api";
 
-import { FileSpreadsheet, Plus } from "lucide-react";
-
-export default function Budgets() {
-    return (
-        <>
-            <div className="page-heading">
-                <div>
-                    <p className="eyebrow">CONTROL DE COSTOS</p>
-                    <h1>Presupuestos</h1>
-                    <p className="muted">Prepará y consultá presupuestos de construcción.</p>
-                </div>
-                <button className="primary-button" onClick={() => alert("Próximamente: elaborar presupuesto")}>
-                    <Plus size={18} /> Nuevo presupuesto
-                </button>
-            </div>
-            <section className="empty-state panel">
-                <FileSpreadsheet size={38} />
-                <h2>Presupuestos de obra</h2>
-                <p>Esta sección reunirá los análisis de precios unitarios, los costos por actividad, los totales y la exportación a Excel.</p>
-            </section>
-        </>
-    );
-}
+type Budget = { id: string; nombre?: string; total: string | number; proyecto?: { nombre: string }; items?: unknown[] };
+export default function Budgets() { const [items,setItems]=useState<Budget[]>([]); const [error,setError]=useState(""); useEffect(()=>{api.get<Budget[]>("/presupuestos").then(r=>setItems(r.data)).catch(()=>setError("No se pudieron cargar los presupuestos."));},[]); return <><div className="page-heading"><div><p className="eyebrow">CONTROL DE COSTOS</p><h1>Presupuestos</h1><p className="muted">Presupuestos creados desde el backend.</p></div></div><section className="panel data-panel"><div className="panel-heading"><div><h2>Presupuestos registrados ({items.length})</h2><p>{error || "Consultá proyectos, actividades y totales."}</p></div><FileSpreadsheet size={28}/></div><div className="table-wrapper"><table><thead><tr><th>Nombre</th><th>Proyecto</th><th>Actividades</th><th>Total</th></tr></thead><tbody>{items.map(x=><tr key={x.id}><td>{x.nombre || "Sin nombre"}</td><td>{x.proyecto?.nombre || "—"}</td><td>{x.items?.length || 0}</td><td>C$ {Number(x.total || 0).toFixed(2)}</td></tr>)}{!items.length&&<tr><td colSpan={4}>No hay presupuestos registrados.</td></tr>}</tbody></table></div></section></>; }

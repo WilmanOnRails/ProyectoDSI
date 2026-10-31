@@ -1,21 +1,5 @@
-
+import { useEffect, useState } from "react";
 import { Package } from "lucide-react";
-
-export default function Resources() {
-    return (
-        <>
-            <div className="page-heading">
-                <div>
-                    <p className="eyebrow">CATÁLOGOS Y PRECIOS</p>
-                    <h1>Recursos y precios</h1>
-                    <p className="muted">Consultá los materiales y sus costos registrados.</p>
-                </div>
-            </div>
-            <section className="empty-state panel">
-                <Package size={38} />
-                <h2>Catálogo de recursos</h2>
-                <p>En esta sección gestionaremos materiales, mano de obra, equipos y transporte, además del historial de precios de materiales.</p>
-            </section>
-        </>
-    );
-}
+import api from "../services/api";
+type Resource={id:string;codigo:string;descripcion:string;unidad:string;costoUnitario:string|number;categoria?:string;proveedor?:string};
+export default function Resources(){const [items,setItems]=useState<Resource[]>([]);const [error,setError]=useState("");useEffect(()=>{api.get<Resource[]>("/recursos").then(r=>setItems(r.data)).catch(()=>setError("No se pudieron cargar los recursos."));},[]);return <><div className="page-heading"><div><p className="eyebrow">CATÁLOGOS Y PRECIOS</p><h1>Recursos y precios</h1><p className="muted">Materiales y costos registrados ({items.length}).</p></div></div><section className="panel data-panel"><div className="panel-heading"><div><h2>Catálogo de recursos</h2><p>{error||"Datos consultados desde Render."}</p></div><Package size={28}/></div><div className="table-wrapper"><table><thead><tr><th>Código</th><th>Descripción</th><th>Categoría</th><th>Unidad</th><th>Precio</th></tr></thead><tbody>{items.slice(0,200).map(x=><tr key={x.id}><td className="code-cell">{x.codigo}</td><td>{x.descripcion}</td><td>{x.categoria||"—"}</td><td>{x.unidad}</td><td>C$ {Number(x.costoUnitario||0).toFixed(2)}</td></tr>)}{!items.length&&<tr><td colSpan={5}>No hay recursos registrados.</td></tr>}</tbody></table></div></section></>}

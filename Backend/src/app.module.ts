@@ -12,6 +12,7 @@ import { ConfiguracionModule } from './configuracion/configuracion.module.js';
 import { RecursosModule } from './recursos/recursos.module.js';
 import { PresupuestosModule } from './presupuestos/presupuestos.module.js';
 import { ScrapingModule } from './scraping/scraping.module.js';
+import { ImportacionesModule } from './importaciones/importaciones.module.js';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { ScrapingModule } from './scraping/scraping.module.js';
     RecursosModule,
     PresupuestosModule,
     ScrapingModule,
+    ImportacionesModule,
   ],
   controllers: [HealthController],
 })
