@@ -114,6 +114,9 @@ export class ImportacionesService {
             codigo,
             nombre: actividadExtraida.descripcion,
             unidad: actividadExtraida.unidad,
+            capituloCodigo: actividadExtraida.capituloCodigo,
+            capituloNombre: actividadExtraida.capituloNombre,
+            orden: indice + 1,
           },
         });
 
@@ -127,6 +130,8 @@ export class ImportacionesService {
             costoManoObraCong: new Prisma.Decimal(0),
             costoEquipoCong: new Prisma.Decimal(0),
             costoTransporteCong: new Prisma.Decimal(0),
+            costoSubcontratoCong: new Prisma.Decimal(0),
+            orden: indice + 1,
             total: new Prisma.Decimal(0),
           },
         });

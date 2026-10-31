@@ -15,8 +15,23 @@ export class PresupuestosService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(createPresupuestoDto: CreatePresupuestoDto) {
-    const { proyectoId, nombre, pctIndirectos, pctUtilidad, pctImpuestos } =
-      createPresupuestoDto;
+    const {
+      proyectoId,
+      nombre,
+      pctIndirectos,
+      pctUtilidad,
+      pctImpuestos,
+      pctImprevistos,
+      numero,
+      fechaVigencia,
+      formaPago,
+      tiempoEjecucion,
+      exclusiones,
+      garantias,
+      responsableTecnico,
+      observaciones,
+      anticipoPct,
+    } = createPresupuestoDto;
 
     const proyecto = await this.prisma.proyecto.findUnique({
       where: { id: proyectoId },
@@ -44,6 +59,16 @@ export class PresupuestosService {
         pctIndirectos: pIndirectos,
         pctUtilidad: pUtilidad,
         pctImpuestos: pImpuestos,
+        pctImprevistos: pctImprevistos ?? new Prisma.Decimal(0),
+        numero,
+        fechaVigencia: fechaVigencia ? new Date(fechaVigencia) : undefined,
+        formaPago,
+        tiempoEjecucion,
+        exclusiones,
+        garantias,
+        responsableTecnico,
+        observaciones,
+        anticipoPct: anticipoPct ?? new Prisma.Decimal(0),
       },
       include: { proyecto: true, items: true },
     });
@@ -207,6 +232,7 @@ export class PresupuestosService {
       pctIndirectos: presupuesto.pctIndirectos,
       pctUtilidad: presupuesto.pctUtilidad,
       pctImpuestos: presupuesto.pctImpuestos,
+      pctImprevistos: presupuesto.pctImprevistos,
     });
 
     return tx.presupuesto.update({
@@ -219,6 +245,8 @@ export class PresupuestosService {
         costoTransporte: dirTransporte.toDecimalPlaces(2),
         indirectos: calculo.indirectos,
         utilidad: calculo.utilidad,
+        imprevistos: calculo.imprevistos,
+        subtotalNeto: calculo.subtotalNeto,
         impuestos: calculo.impuestos,
         total: calculo.total,
       },

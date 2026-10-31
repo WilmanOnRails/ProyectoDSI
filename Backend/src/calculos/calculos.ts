@@ -26,12 +26,15 @@ export interface PorcentajesPresupuesto {
   pctIndirectos: Decimal | number | string;
   pctUtilidad: Decimal | number | string;
   pctImpuestos: Decimal | number | string;
+  pctImprevistos?: Decimal | number | string;
 }
 
 export interface ResultadoPresupuesto {
   costosDirectos: Decimal;
   indirectos: Decimal;
   utilidad: Decimal;
+  imprevistos: Decimal;
+  subtotalNeto: Decimal;
   impuestos: Decimal;
   total: Decimal;
 }
@@ -161,15 +164,26 @@ export function calcularTotalesPresupuesto(
   const utilidad = redondear(
     dir.add(indirectos).mul(pct(porcentajes.pctUtilidad)),
   );
-  const impuestos = redondear(
-    dir.add(indirectos).add(utilidad).mul(pct(porcentajes.pctImpuestos)),
+  const imprevistos = redondear(
+    dir
+      .add(indirectos)
+      .add(utilidad)
+      .mul(pct(porcentajes.pctImprevistos ?? 0)),
   );
-  const total = redondear(dir.add(indirectos).add(utilidad).add(impuestos));
+  const subtotalNeto = redondear(
+    dir.add(indirectos).add(utilidad).add(imprevistos),
+  );
+  const impuestos = redondear(
+    subtotalNeto.mul(pct(porcentajes.pctImpuestos)),
+  );
+  const total = redondear(subtotalNeto.add(impuestos));
 
   return {
     costosDirectos: redondear(dir),
     indirectos,
     utilidad,
+    imprevistos,
+    subtotalNeto,
     impuestos,
     total,
   };

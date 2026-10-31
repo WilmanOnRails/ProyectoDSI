@@ -36,6 +36,24 @@ export class UpdateConfiguracionDto {
   @MaxLength(3)
   moneda?: string;
 
+  @ApiPropertyOptional({ example: '+505 2222-2222' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  telefono?: string;
+
+  @ApiPropertyOptional({ example: 'Managua, Nicaragua' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  direccion?: string;
+
+  @ApiPropertyOptional({ example: 'contacto@constructora.com' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  correo?: string;
+
   @ApiPropertyOptional({
     example: 15,
     description: 'Porcentaje de costos indirectos por defecto',
