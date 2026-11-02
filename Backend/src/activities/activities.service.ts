@@ -5,34 +5,54 @@ import { PrismaService } from '../prisma/prisma.service.js';
 
 @Injectable()
 export class ActivitiesService {
-
-  constructor(private prisma: PrismaService) { }
+  constructor(private prisma: PrismaService) {}
 
   create(createActivityDto: CreateActivityDto) {
     return this.prisma.actividad.create({ data: createActivityDto });
   }
 
   findAll() {
-    return this.prisma.actividad.findMany();
+    return this.prisma.actividad.findMany({
+      include: {
+        presupuestoItems: {
+          include: {
+            presupuesto: {
+              include: {
+                proyecto: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { codigo: 'asc' },
+    });
   }
 
   findOne(id: string) {
-    return this.prisma.actividad.findUnique(
-      { where: { id } }
-    );
+    return this.prisma.actividad.findUnique({
+      where: { id },
+      include: {
+        presupuestoItems: {
+          include: {
+            presupuesto: {
+              include: {
+                proyecto: true,
+              },
+            },
+          },
+        },
+      },
+    });
   }
 
   update(id: string, updateActivityDto: UpdateActivityDto) {
-    return this.prisma.actividad.update(
-      {
-        where: { id },
-        data: updateActivityDto
-      });
+    return this.prisma.actividad.update({
+      where: { id },
+      data: updateActivityDto,
+    });
   }
 
   remove(id: string) {
-    return this.prisma.actividad.delete(
-      { where: { id } }
-    );
+    return this.prisma.actividad.delete({ where: { id } });
   }
 }
