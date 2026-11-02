@@ -76,6 +76,14 @@ export class PresupuestosController {
     return this.presupuestosService.quitarItem(id, itemId);
   }
 
+  @Post(':id/sincronizar')
+  @ApiOperation({
+    summary: 'Sincroniza y actualiza los costos del presupuesto con los APU actuales de las actividades',
+  })
+  sincronizarCostos(@Param('id', ParseUUIDPipe) id: string) {
+    return this.presupuestosService.sincronizarCostos(id);
+  }
+
   @Get(':id/excel')
   @ApiOperation({ summary: 'Exporta el presupuesto en formato Excel (.xlsx)' })
   async exportarExcel(

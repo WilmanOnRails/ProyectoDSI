@@ -83,7 +83,7 @@ export default function Budgets() {
         <div>
           <p className="eyebrow">CONTROL DE COSTOS</p>
           <h1>Presupuestos</h1>
-          <p className="muted">Seleccioná un presupuesto para ver su desglose financiero y comercial.</p>
+          <p className="muted">Presupuestos calculados automáticamente con sus totales, partidas y capítulos.</p>
         </div>
       </div>
 
@@ -91,7 +91,7 @@ export default function Budgets() {
         <div className="panel-heading">
           <div>
             <h2>Presupuestos registrados ({items.length})</h2>
-            <p>{error || "Datos consultados desde el backend."}</p>
+            <p>{error || "Totales sincronizados automáticamente desde los APUs del sistema."}</p>
           </div>
           <FileSpreadsheet size={28} />
         </div>
@@ -102,7 +102,7 @@ export default function Budgets() {
                 <th>Nombre</th>
                 <th>Proyecto</th>
                 <th>Actividades</th>
-                <th>Total</th>
+                <th>Total General</th>
                 <th></th>
               </tr>
             </thead>
@@ -112,7 +112,7 @@ export default function Budgets() {
                   <td>{x.nombre || "Sin nombre"}</td>
                   <td>{x.proyecto?.nombre || "—"}</td>
                   <td>{x.items?.length || 0}</td>
-                  <td>{money(x.total)}</td>
+                  <td><strong>{money(x.total)}</strong></td>
                   <td>
                     <button className="text-link" onClick={() => void open(x.id)}>
                       Ver desglose
@@ -137,7 +137,7 @@ export default function Budgets() {
               <h2>{selected.nombre}</h2>
               <p>{selected.proyecto?.nombre} · {selected.proyecto?.ubicacion || "Ubicación no indicada"}</p>
             </div>
-            <div style={{ display: "flex", gap: "10px" }}>
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
               <button
                 className="primary-button"
                 onClick={() => void exportExcel(selected.id)}
@@ -151,7 +151,9 @@ export default function Budgets() {
             </div>
           </div>
 
-          <div className="table-wrapper">
+          {error && <div className="import-error">{error}</div>}
+
+          <div className="table-wrapper" style={{ marginTop: "14px" }}>
             <table>
               <thead>
                 <tr>
@@ -160,22 +162,27 @@ export default function Budgets() {
                   <th>Descripción</th>
                   <th>U.M.</th>
                   <th>Cantidad</th>
-                  <th>P.U.</th>
-                  <th>Importe</th>
+                  <th>P.U. Unitario</th>
+                  <th>Importe Total</th>
                 </tr>
               </thead>
               <tbody>
                 {(selected.items || []).map((x, i) => (
                   <tr key={x.id}>
                     <td className="code-cell">{x.actividad.codigo || String(i + 1)}</td>
-                    <td>{x.actividad.capituloNombre || x.actividad.capituloCodigo || "—"}</td>
-                    <td>{x.actividad.nombre}</td>
+                    <td>{x.actividad.capituloNombre || x.actividad.capituloCodigo || "General"}</td>
+                    <td className="truncate-cell" title={x.actividad.nombre}>{x.actividad.nombre}</td>
                     <td>{x.actividad.unidad}</td>
                     <td>{x.cantidadProyecto}</td>
                     <td>{money(x.costoUnitarioCongelado)}</td>
-                    <td>{money(x.total)}</td>
+                    <td><strong>{money(x.total)}</strong></td>
                   </tr>
                 ))}
+                {!selected.items?.length && (
+                  <tr>
+                    <td colSpan={7}>Este presupuesto no tiene ítems asociados.</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

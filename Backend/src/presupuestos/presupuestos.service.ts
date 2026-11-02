@@ -307,4 +307,47 @@ export class PresupuestosService {
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
   }
+
+  async sincronizarCostos(presupuestoId: string) {
+    const presupuesto = await this.prisma.presupuesto.findUnique({
+      where: { id: presupuestoId },
+      include: {
+        items: {
+          include: {
+            actividad: {
+              include: { apuCostoCache: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!presupuesto) {
+      throw new NotFoundException(`Presupuesto con ID ${presupuestoId} no encontrado`);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      for (const item of presupuesto.items) {
+        const cache = item.actividad.apuCostoCache;
+        if (cache) {
+          const costoUnitarioCongelado = cache.costoTotal;
+          const totalItem = costoUnitarioCongelado.mul(item.cantidadProyecto);
+
+          await tx.presupuestoItem.update({
+            where: { id: item.id },
+            data: {
+              costoUnitarioCongelado,
+              costoMaterialesCong: cache.costoMateriales,
+              costoManoObraCong: cache.costoManoObra,
+              costoEquipoCong: cache.costoEquipo,
+              costoTransporteCong: cache.costoTransporte,
+              total: totalItem,
+            },
+          });
+        }
+      }
+
+      return this.recalcularTotalesPresupuesto(tx, presupuestoId);
+    });
+  }
 }

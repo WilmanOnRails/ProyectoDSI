@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { calcularApu } from '../calculos/calculos.js';
+import { calcularApu, calcularTotalesPresupuesto } from '../calculos/calculos.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateApusDto } from './dto/create-apus.dto.js';
 import { UpdateApusDto } from './dto/update-apus.dto.js';
@@ -183,5 +183,73 @@ export class ApusService {
         fechaCalculo: new Date(),
       },
     });
+
+    // Propagación automática a los ítems de presupuesto que usan esta actividad
+    const presupuestoItems = await tx.presupuestoItem.findMany({
+      where: { actividadId },
+    });
+
+    for (const item of presupuestoItems) {
+      const costoUnitarioCongelado = costoCalculado.costoTotal;
+      const totalItem = costoUnitarioCongelado.mul(item.cantidadProyecto);
+
+      await tx.presupuestoItem.update({
+        where: { id: item.id },
+        data: {
+          costoUnitarioCongelado,
+          costoMaterialesCong: costoCalculado.costoMateriales,
+          costoManoObraCong: costoCalculado.costoManoObra,
+          costoEquipoCong: costoCalculado.costoEquipo,
+          costoTransporteCong: costoCalculado.costoTransporte,
+          total: totalItem,
+        },
+      });
+
+      const presupuesto = await tx.presupuesto.findUnique({
+        where: { id: item.presupuestoId },
+        include: { items: true },
+      });
+
+      if (presupuesto) {
+        let dirMat = new Prisma.Decimal(0);
+        let dirMo = new Prisma.Decimal(0);
+        let dirEq = new Prisma.Decimal(0);
+        let dirTr = new Prisma.Decimal(0);
+        let dirTot = new Prisma.Decimal(0);
+
+        for (const pi of presupuesto.items) {
+          const cant = pi.cantidadProyecto;
+          dirMat = dirMat.add(pi.costoMaterialesCong.mul(cant));
+          dirMo = dirMo.add(pi.costoManoObraCong.mul(cant));
+          dirEq = dirEq.add(pi.costoEquipoCong.mul(cant));
+          dirTr = dirTr.add(pi.costoTransporteCong.mul(cant));
+          dirTot = dirTot.add(pi.total);
+        }
+
+        const calc = calcularTotalesPresupuesto(dirTot, {
+          pctIndirectos: presupuesto.pctIndirectos,
+          pctUtilidad: presupuesto.pctUtilidad,
+          pctImpuestos: presupuesto.pctImpuestos,
+          pctImprevistos: presupuesto.pctImprevistos,
+        });
+
+        await tx.presupuesto.update({
+          where: { id: presupuesto.id },
+          data: {
+            costosDirectos: calc.costosDirectos,
+            costoMateriales: dirMat.toDecimalPlaces(2),
+            costoManoObra: dirMo.toDecimalPlaces(2),
+            costoEquipo: dirEq.toDecimalPlaces(2),
+            costoTransporte: dirTr.toDecimalPlaces(2),
+            indirectos: calc.indirectos,
+            utilidad: calc.utilidad,
+            imprevistos: calc.imprevistos,
+            subtotalNeto: calc.subtotalNeto,
+            impuestos: calc.impuestos,
+            total: calc.total,
+          },
+        });
+      }
+    }
   }
 }
