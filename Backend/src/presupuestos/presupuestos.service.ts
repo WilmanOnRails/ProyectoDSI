@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import ExcelJS from 'exceljs';
 import { calcularTotalesPresupuesto } from '../calculos/calculos.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AgregarItemDto } from './dto/agregar-item.dto.js';
@@ -252,5 +253,58 @@ export class PresupuestosService {
       },
       include: { proyecto: true, items: { include: { actividad: true } } },
     });
+  }
+
+  async exportarExcel(id: string) {
+    const presupuesto = await this.findOne(id);
+    const config = await this.prisma.configuracion.findUnique({
+      where: { id: 1 },
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Presupuesto');
+
+    sheet.addRow([config?.empresa ?? 'Constructora DSI']);
+    sheet.addRow([`RUC: ${config?.ruc ?? 'J0310000000000'}`]);
+    sheet.addRow([`Presupuesto: ${presupuesto.nombre}`]);
+    sheet.addRow([`Proyecto: ${presupuesto.proyecto.nombre}`]);
+    sheet.addRow([]);
+
+    sheet.addRow([
+      'Código',
+      'Capítulo',
+      'Descripción',
+      'U.M.',
+      'Cantidad',
+      'P.U. (C$)',
+      'Importe (C$)',
+    ]);
+
+    for (const item of presupuesto.items) {
+      sheet.addRow([
+        item.actividad.codigo,
+        item.actividad.capituloNombre ||
+          item.actividad.capituloCodigo ||
+          'GENERAL',
+        item.actividad.nombre,
+        item.actividad.unidad,
+        Number(item.cantidadProyecto),
+        Number(item.costoUnitarioCongelado),
+        Number(item.total),
+      ]);
+    }
+
+    sheet.addRow([]);
+    sheet.addRow(['RESUMEN FINANCIERO']);
+    sheet.addRow(['Costos Directos', Number(presupuesto.costosDirectos)]);
+    sheet.addRow(['Indirectos', Number(presupuesto.indirectos)]);
+    sheet.addRow(['Utilidad', Number(presupuesto.utilidad)]);
+    sheet.addRow(['Imprevistos', Number(presupuesto.imprevistos)]);
+    sheet.addRow(['Subtotal Neto', Number(presupuesto.subtotalNeto)]);
+    sheet.addRow(['Impuestos', Number(presupuesto.impuestos)]);
+    sheet.addRow(['PRECIO TOTAL', Number(presupuesto.total)]);
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
   }
 }

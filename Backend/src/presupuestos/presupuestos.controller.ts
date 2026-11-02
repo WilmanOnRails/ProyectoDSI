@@ -7,8 +7,10 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Res,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { AgregarItemDto } from './dto/agregar-item.dto.js';
 import { CreatePresupuestoDto } from './dto/create-presupuesto.dto.js';
 import { UpdatePresupuestoDto } from './dto/update-presupuesto.dto.js';
@@ -72,5 +74,23 @@ export class PresupuestosController {
     @Param('itemId', ParseUUIDPipe) itemId: string,
   ) {
     return this.presupuestosService.quitarItem(id, itemId);
+  }
+
+  @Get(':id/excel')
+  @ApiOperation({ summary: 'Exporta el presupuesto en formato Excel (.xlsx)' })
+  async exportarExcel(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.presupuestosService.exportarExcel(id);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=presupuesto-${id}.xlsx`,
+    );
+    res.send(buffer);
   }
 }
