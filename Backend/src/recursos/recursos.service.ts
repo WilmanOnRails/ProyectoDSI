@@ -2,6 +2,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { Prisma, TipoRecurso } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -17,8 +18,16 @@ import { QueryRecursoDto } from './dto/query-recurso.dto.js';
 import { UpdateRecursoDto } from './dto/update-recurso.dto.js';
 
 @Injectable()
-export class RecursosService {
+export class RecursosService implements OnModuleInit {
   constructor(private readonly prisma: PrismaService) {}
+
+  async onModuleInit() {
+    try {
+      await this.seedDefaults();
+    } catch {
+      // Silenciar si la BD aún no está disponible en arranque
+    }
+  }
 
   /** Prefijo del código según el tipo de recurso (como en el Figma). */
   private readonly prefijos: Record<TipoRecurso, string> = {
@@ -422,5 +431,29 @@ export class RecursosService {
     }
 
     return error instanceof Error ? error : new Error('Error inesperado');
+  }
+
+  async seedDefaults() {
+    const predeterminados = [
+      { codigo: 'MO-0001', tipo: TipoRecurso.mano_obra, descripcion: 'Oficial albañil', unidad: 'Hra', costoUnitario: 120.00, categoria: 'Mano de Obra' },
+      { codigo: 'MO-0002', tipo: TipoRecurso.mano_obra, descripcion: 'Ayudante / Peón', unidad: 'Hra', costoUnitario: 80.00, categoria: 'Mano de Obra' },
+      { codigo: 'MO-0003', tipo: TipoRecurso.mano_obra, descripcion: 'Capataz de obra', unidad: 'Hra', costoUnitario: 160.00, categoria: 'Mano de Obra' },
+      { codigo: 'MO-0004', tipo: TipoRecurso.mano_obra, descripcion: 'Operador de maquinaria', unidad: 'Hra', costoUnitario: 150.00, categoria: 'Mano de Obra' },
+      { codigo: 'EQ-0001', tipo: TipoRecurso.equipo, descripcion: 'Retroexcavadora', unidad: 'Hra', costoUnitario: 1200.00, categoria: 'Equipos y Maquinaria' },
+      { codigo: 'EQ-0002', tipo: TipoRecurso.equipo, descripcion: 'Compactador vibratorio (Plancha)', unidad: 'Hra', costoUnitario: 800.00, categoria: 'Equipos y Maquinaria' },
+      { codigo: 'EQ-0003', tipo: TipoRecurso.equipo, descripcion: 'Mezcladora de concreto 1 saco', unidad: 'Hra', costoUnitario: 450.00, categoria: 'Equipos y Maquinaria' },
+      { codigo: 'TRA-0001', tipo: TipoRecurso.transporte, descripcion: 'Camión de volteo (Volqueta)', unidad: 'Viaje', costoUnitario: 1500.00, categoria: 'Transporte y Acarreo' },
+      { codigo: 'TRA-0002', tipo: TipoRecurso.transporte, descripcion: 'Acarreo de material selecto', unidad: 'm3', costoUnitario: 250.00, categoria: 'Transporte y Acarreo' },
+    ];
+
+    for (const r of predeterminados) {
+      await this.prisma.recurso.upsert({
+        where: { codigo: r.codigo },
+        update: { costoUnitario: r.costoUnitario, descripcion: r.descripcion, categoria: r.categoria },
+        create: r,
+      });
+    }
+
+    return { mensaje: 'Recursos predeterminados (Mano de Obra, Equipos y Transporte) insertados correctamente.' };
   }
 }
