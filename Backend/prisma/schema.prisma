@@ -106,7 +106,8 @@ model Presupuesto {
   numero             String?           @unique
   fecha              DateTime          @default(now())
   fechaVigencia      DateTime?         @map("fecha_vigencia")
-  pctIndirectos      Decimal           @default(15.00) @map("pct_indirectos") @db.Decimal(5, 2)
+  pctIndirectos      Decimal           @default(5.00) @map("pct_indirectos") @db.Decimal(5, 2)
+  pctAdministracion Decimal           @default(8.00) @map("pct_administracion") @db.Decimal(5, 2)
   pctUtilidad        Decimal           @default(10.00) @map("pct_utilidad") @db.Decimal(5, 2)
   pctImpuestos       Decimal           @default(15.00) @map("pct_impuestos") @db.Decimal(5, 2)
   pctImprevistos     Decimal           @default(0) @map("pct_imprevistos") @db.Decimal(5, 2)
@@ -116,6 +117,7 @@ model Presupuesto {
   costoEquipo        Decimal           @default(0) @map("costo_equipo") @db.Decimal(14, 2)
   costoTransporte    Decimal           @default(0) @map("costo_transporte") @db.Decimal(14, 2)
   indirectos         Decimal           @default(0) @db.Decimal(14, 2)
+  administracion    Decimal           @default(0) @db.Decimal(14, 2)
   utilidad           Decimal           @default(0) @db.Decimal(14, 2)
   imprevistos        Decimal           @default(0) @db.Decimal(14, 2)
   subtotalNeto       Decimal           @default(0) @map("subtotal_neto") @db.Decimal(14, 2)
@@ -174,9 +176,11 @@ model Configuracion {
   telefono         String?
   direccion        String?
   correo           String?
-  pctIndirectosDef Decimal @default(15.00) @map("pct_indirectos_def") @db.Decimal(5, 2)
+  pctIndirectosDef Decimal @default(5.00) @map("pct_indirectos_def") @db.Decimal(5, 2)
+  pctAdministracionDef Decimal @default(8.00) @map("pct_administracion_def") @db.Decimal(5, 2)
   pctUtilidadDef   Decimal @default(10.00) @map("pct_utilidad_def") @db.Decimal(5, 2)
   pctImpuestosDef  Decimal @default(15.00) @map("pct_impuestos_def") @db.Decimal(5, 2)
+  pctImprevistosDef Decimal @default(0) @map("pct_imprevistos_def") @db.Decimal(5, 2)
 
   @@map("configuracion")
 }
