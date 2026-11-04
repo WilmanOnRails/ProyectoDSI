@@ -1,6 +1,8 @@
 
 import { BrowserRouter, Route, Routes } from "react-router-dom";
+import ProtectedRoute from "./components/ProtectedRoute.tsx";
 import DashboardLayout from "./layouts/DashboardLayout.tsx";
+import Login from "./pages/Login.tsx";
 import Dashboard from "./pages/dashboard.tsx";
 import Projects from "./pages/Projects.tsx";
 import Activities from "./pages/Activities.tsx";
@@ -12,7 +14,14 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route element={<DashboardLayout />}>
+        <Route path="/login" element={<Login />} />
+        <Route
+          element={
+            <ProtectedRoute>
+              <DashboardLayout />
+            </ProtectedRoute>
+          }
+        >
           <Route path="/" element={<Dashboard />} />
           <Route path="/proyectos" element={<Projects />} />
           <Route path="/actividades" element={<Activities />} />
