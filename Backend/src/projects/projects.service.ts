@@ -29,24 +29,57 @@ export class ProjectsService {
   }
 
   async remove(id: string) {
-    return this.prisma.$transaction(async (tx) => {
-      const presupuestos = await tx.presupuesto.findMany({
-        where: { proyectoId: id },
-        select: { id: true },
-      });
-
-      for (const p of presupuestos) {
-        await tx.presupuestoItem.deleteMany({
-          where: { presupuestoId: p.id },
+    return this.prisma.$transaction(
+      async (tx) => {
+        // 1. Buscar presupuestos del proyecto con sus ítems
+        const presupuestos = await tx.presupuesto.findMany({
+          where: { proyectoId: id },
+          include: { items: { select: { actividadId: true } } },
         });
-        await tx.presupuesto.delete({
-          where: { id: p.id },
-        });
-      }
 
-      return tx.proyecto.delete({
-        where: { id },
-      });
-    });
+        const actividadIds = new Set<string>();
+        for (const p of presupuestos) {
+          for (const item of p.items) {
+            actividadIds.add(item.actividadId);
+          }
+        }
+
+        // 2. Eliminar ítems de presupuesto y presupuestos (con manejo seguro si ya no existen)
+        for (const p of presupuestos) {
+          await tx.presupuestoItem.deleteMany({
+            where: { presupuestoId: p.id },
+          });
+          try {
+            await tx.presupuesto.delete({
+              where: { id: p.id },
+            });
+          } catch (e: any) {
+            if (e?.code !== 'P2025') throw e;
+          }
+        }
+
+        // 3. Eliminar actividades asociadas que ya no tengan otros usos
+        for (const actividadId of actividadIds) {
+          const countUsos = await tx.presupuestoItem.count({
+            where: { actividadId },
+          });
+          if (countUsos === 0) {
+            await tx.apuCostoCache.deleteMany({ where: { actividadId } });
+            await tx.apuDetalle.deleteMany({ where: { actividadId } });
+            try {
+              await tx.actividad.delete({ where: { id: actividadId } });
+            } catch (e: any) {
+              if (e?.code !== 'P2025') throw e;
+            }
+          }
+        }
+
+        // 4. Eliminar el proyecto
+        return tx.proyecto.delete({
+          where: { id },
+        });
+      },
+      { maxWait: 10000, timeout: 120000 },
+    );
   }
 }
