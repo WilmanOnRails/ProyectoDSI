@@ -5,11 +5,24 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
-import { calcularTotalesPresupuesto } from '../calculos/calculos.js';
+import { calcularResumenPresupuesto, calcularTotalesLinea } from '../calculos/calculos.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AgregarItemDto } from './dto/agregar-item.dto.js';
 import { CreatePresupuestoDto } from './dto/create-presupuesto.dto.js';
 import { UpdatePresupuestoDto } from './dto/update-presupuesto.dto.js';
+
+/** Porcentajes que vienen SIEMPRE del módulo de Configuración. */
+type PorcentajesCalculo = {
+  pctIndirectos: Prisma.Decimal;
+  pctAdministracion: Prisma.Decimal;
+  pctUtilidad: Prisma.Decimal;
+  pctImprevistos: Prisma.Decimal;
+  pctImpuestos: Prisma.Decimal;
+};
+
+type PresupuestoConItems = Prisma.PresupuestoGetPayload<{
+  include: { proyecto: true; items: { include: { actividad: true } } };
+}>;
 
 @Injectable()
 export class PresupuestosService {
@@ -19,10 +32,6 @@ export class PresupuestosService {
     const {
       proyectoId,
       nombre,
-      pctIndirectos,
-      pctUtilidad,
-      pctImpuestos,
-      pctImprevistos,
       numero,
       fechaVigencia,
       formaPago,
@@ -46,21 +55,24 @@ export class PresupuestosService {
       where: { id: 1 },
     });
 
-    const pIndirectos =
-      pctIndirectos ?? config?.pctIndirectosDef ?? new Prisma.Decimal(15.0);
-    const pUtilidad =
-      pctUtilidad ?? config?.pctUtilidadDef ?? new Prisma.Decimal(10.0);
-    const pImpuestos =
-      pctImpuestos ?? config?.pctImpuestosDef ?? new Prisma.Decimal(15.0);
+    // Los porcentajes SIEMPRE salen de Configuración.
+    const pIndirectos = config?.pctIndirectosDef ?? new Prisma.Decimal(5.0);
+    const pAdministracion =
+      config?.pctAdministracionDef ?? new Prisma.Decimal(8.0);
+    const pUtilidad = config?.pctUtilidadDef ?? new Prisma.Decimal(10.0);
+    const pImpuestos = config?.pctImpuestosDef ?? new Prisma.Decimal(15.0);
+    const pImprevistos =
+      config?.pctImprevistosDef ?? new Prisma.Decimal(0);
 
     return this.prisma.presupuesto.create({
       data: {
         proyectoId,
         nombre: nombre ?? `Presupuesto - ${proyecto.nombre}`,
         pctIndirectos: pIndirectos,
+        pctAdministracion: pAdministracion,
         pctUtilidad: pUtilidad,
         pctImpuestos: pImpuestos,
-        pctImprevistos: pctImprevistos ?? new Prisma.Decimal(0),
+        pctImprevistos: pImprevistos,
         numero,
         fechaVigencia: fechaVigencia ? new Date(fechaVigencia) : undefined,
         formaPago,
@@ -75,30 +87,129 @@ export class PresupuestosService {
     });
   }
 
-  findAll() {
-    return this.prisma.presupuesto.findMany({
-      include: { proyecto: true, items: { include: { actividad: true } } },
-      orderBy: { fecha: 'desc' },
-    });
+  async findAll() {
+    const [presupuestos, config] = await Promise.all([
+      this.prisma.presupuesto.findMany({
+        include: { proyecto: true, items: { include: { actividad: true } } },
+        orderBy: { fecha: 'desc' },
+      }),
+      this.prisma.configuracion.findUnique({ where: { id: 1 } }),
+    ]);
+
+    const porcentajes = this.porcentajesDesdeConfig(config);
+    return presupuestos.map((p) => this.conResumenCalculado(p, porcentajes));
   }
 
   async findOne(id: string) {
-    const presupuesto = await this.prisma.presupuesto.findUnique({
-      where: { id },
-      include: {
-        proyecto: true,
-        items: {
-          include: { actividad: true },
-          orderBy: { actividad: { codigo: 'asc' } },
+    const [presupuesto, config] = await Promise.all([
+      this.prisma.presupuesto.findUnique({
+        where: { id },
+        include: {
+          proyecto: true,
+          items: {
+            include: { actividad: true },
+            orderBy: { actividad: { codigo: 'asc' } },
+          },
         },
-      },
-    });
+      }),
+      this.prisma.configuracion.findUnique({ where: { id: 1 } }),
+    ]);
 
     if (!presupuesto) {
       throw new NotFoundException(`Presupuesto con ID ${id} no encontrado`);
     }
 
-    return presupuesto;
+    const porcentajes = this.porcentajesDesdeConfig(config);
+    return this.conResumenCalculado(presupuesto, porcentajes);
+  }
+
+  /**
+   * Lee los porcentajes del módulo de Configuración.
+   * Si todavía no existe el registro, usa los valores por defecto del sistema.
+   */
+  private porcentajesDesdeConfig(
+    config: {
+      pctIndirectosDef: Prisma.Decimal;
+      pctAdministracionDef: Prisma.Decimal;
+      pctUtilidadDef: Prisma.Decimal;
+      pctImpuestosDef: Prisma.Decimal;
+      pctImprevistosDef: Prisma.Decimal;
+    } | null,
+  ): PorcentajesCalculo {
+    return {
+      pctIndirectos: config?.pctIndirectosDef ?? new Prisma.Decimal(5),
+      pctAdministracion:
+        config?.pctAdministracionDef ?? new Prisma.Decimal(8),
+      pctUtilidad: config?.pctUtilidadDef ?? new Prisma.Decimal(10),
+      pctImprevistos: config?.pctImprevistosDef ?? new Prisma.Decimal(0),
+      pctImpuestos: config?.pctImpuestosDef ?? new Prisma.Decimal(15),
+    };
+  }
+
+  /**
+   * Calcula el resumen con la MISMA función pura que se usa al guardar.
+   * Los porcentajes se toman del módulo de Configuración y las columnas P.U.
+   * se calculan aquí como Total / Cantidad.
+   */
+  private conResumenCalculado(
+    presupuesto: PresupuestoConItems,
+    porcentajes: PorcentajesCalculo,
+  ) {
+    const items = presupuesto.items.map((item) => {
+      const linea = calcularTotalesLinea(item);
+      const cant = item.cantidadProyecto;
+      const dividir = (valorApu: Prisma.Decimal) =>
+        cant.gt(0) ? valorApu.div(cant).toDecimalPlaces(2) : new Prisma.Decimal(0);
+
+      // P.U. = costo del APU / cantidad del proyecto.
+      // Ejemplo: 522.57 / 3,710.36 = 0.14.
+      const puMateriales = dividir(item.costoMaterialesCong);
+      const puManoObra = dividir(item.costoManoObraCong);
+      const puEquipo = dividir(item.costoEquipoCong);
+      const puTransporte = dividir(item.costoTransporteCong);
+
+      return {
+        ...item,
+        totalMateriales: linea.totalMateriales,
+        totalManoObra: linea.totalManoObra,
+        totalEquipo: linea.totalEquipo,
+        totalTransporte: linea.totalTransporte,
+        sumaTotal: linea.sumaTotal,
+        puMateriales,
+        puManoObra,
+        puEquipo,
+        puTransporte,
+        // P.U. Total = suma de las cuatro P.U. ya redondeadas.
+        puTotal: puMateriales
+          .add(puManoObra)
+          .add(puEquipo)
+          .add(puTransporte),
+      };
+    });
+
+    const resumen = calcularResumenPresupuesto(presupuesto.items, porcentajes);
+
+    return {
+      ...presupuesto,
+      items,
+      pctIndirectos: porcentajes.pctIndirectos,
+      pctAdministracion: porcentajes.pctAdministracion,
+      pctUtilidad: porcentajes.pctUtilidad,
+      pctImprevistos: porcentajes.pctImprevistos,
+      pctImpuestos: porcentajes.pctImpuestos,
+      costosDirectos: resumen.costosDirectos,
+      costoMateriales: resumen.costoMateriales,
+      costoManoObra: resumen.costoManoObra,
+      costoEquipo: resumen.costoEquipo,
+      costoTransporte: resumen.costoTransporte,
+      indirectos: resumen.indirectos,
+      administracion: resumen.administracion,
+      utilidad: resumen.utilidad,
+      imprevistos: resumen.imprevistos,
+      subtotalNeto: resumen.subtotalNeto,
+      impuestos: resumen.impuestos,
+      total: resumen.total,
+    };
   }
 
   async update(id: string, updatePresupuestoDto: UpdatePresupuestoDto) {
@@ -201,7 +312,11 @@ export class PresupuestosService {
 
   /**
    * Recalcula los costos directos y aplica la fórmula en CASCADA
-   * usando la función pura calcularTotalesPresupuesto.
+   * usando la función pura calcularResumenPresupuesto.
+   *
+   * El costo directo se obtiene SIEMPRE de la suma de las líneas
+   * (Total Mat + Total M.O. + Total Eq. + Total Trans), nunca de
+   * `item.total` ni de `costoUnitarioCongelado`.
    */
   private async recalcularTotalesPresupuesto(
     tx: Prisma.TransactionClient,
@@ -214,42 +329,44 @@ export class PresupuestosService {
 
     if (!presupuesto) return null;
 
-    let dirMateriales = new Prisma.Decimal(0);
-    let dirManoObra = new Prisma.Decimal(0);
-    let dirEquipo = new Prisma.Decimal(0);
-    let dirTransporte = new Prisma.Decimal(0);
-    let costosDirectos = new Prisma.Decimal(0);
+    // Los porcentajes se toman SIEMPRE del módulo de Configuración.
+    const config = await tx.configuracion.findUnique({ where: { id: 1 } });
+    const porcentajes = this.porcentajesDesdeConfig(config);
 
+    // Mantenemos PresupuestoItem.total sincronizado con la suma de sus
+    // componentes. La fuente de verdad sigue siendo la suma de líneas.
     for (const item of presupuesto.items) {
-      const cant = item.cantidadProyecto;
-      dirMateriales = dirMateriales.add(item.costoMaterialesCong.mul(cant));
-      dirManoObra = dirManoObra.add(item.costoManoObraCong.mul(cant));
-      dirEquipo = dirEquipo.add(item.costoEquipoCong.mul(cant));
-      dirTransporte = dirTransporte.add(item.costoTransporteCong.mul(cant));
-      costosDirectos = costosDirectos.add(item.total);
+      const linea = calcularTotalesLinea(item);
+      if (!item.total.equals(linea.sumaTotal)) {
+        await tx.presupuestoItem.update({
+          where: { id: item.id },
+          data: { total: linea.sumaTotal },
+        });
+      }
     }
 
-    const calculo = calcularTotalesPresupuesto(costosDirectos, {
-      pctIndirectos: presupuesto.pctIndirectos,
-      pctUtilidad: presupuesto.pctUtilidad,
-      pctImpuestos: presupuesto.pctImpuestos,
-      pctImprevistos: presupuesto.pctImprevistos,
-    });
+    const resumen = calcularResumenPresupuesto(presupuesto.items, porcentajes);
 
     return tx.presupuesto.update({
       where: { id: presupuestoId },
       data: {
-        costosDirectos: calculo.costosDirectos,
-        costoMateriales: dirMateriales.toDecimalPlaces(2),
-        costoManoObra: dirManoObra.toDecimalPlaces(2),
-        costoEquipo: dirEquipo.toDecimalPlaces(2),
-        costoTransporte: dirTransporte.toDecimalPlaces(2),
-        indirectos: calculo.indirectos,
-        utilidad: calculo.utilidad,
-        imprevistos: calculo.imprevistos,
-        subtotalNeto: calculo.subtotalNeto,
-        impuestos: calculo.impuestos,
-        total: calculo.total,
+        pctIndirectos: porcentajes.pctIndirectos,
+        pctAdministracion: porcentajes.pctAdministracion,
+        pctUtilidad: porcentajes.pctUtilidad,
+        pctImprevistos: porcentajes.pctImprevistos,
+        pctImpuestos: porcentajes.pctImpuestos,
+        costosDirectos: resumen.costosDirectos,
+        costoMateriales: resumen.costoMateriales,
+        costoManoObra: resumen.costoManoObra,
+        costoEquipo: resumen.costoEquipo,
+        costoTransporte: resumen.costoTransporte,
+        indirectos: resumen.indirectos,
+        administracion: resumen.administracion,
+        utilidad: resumen.utilidad,
+        imprevistos: resumen.imprevistos,
+        subtotalNeto: resumen.subtotalNeto,
+        impuestos: resumen.impuestos,
+        total: resumen.total,
       },
       include: { proyecto: true, items: { include: { actividad: true } } },
     });
@@ -266,43 +383,129 @@ export class PresupuestosService {
 
     sheet.addRow([config?.empresa ?? 'Constructora DSI']);
     sheet.addRow([`RUC: ${config?.ruc ?? 'J0310000000000'}`]);
-    sheet.addRow([`Presupuesto: ${presupuesto.nombre}`]);
+    sheet.addRow([`Presupuesto: ${presupuesto.nombre ?? ''}`]);
     sheet.addRow([`Proyecto: ${presupuesto.proyecto.nombre}`]);
     sheet.addRow([]);
 
-    sheet.addRow([
+    const headers = [
       'Código',
       'Capítulo',
       'Descripción',
       'U.M.',
       'Cantidad',
-      'P.U. (C$)',
-      'Importe (C$)',
-    ]);
+      'P.U. Mat.',
+      'P.U. M.O.',
+      'P.U. Eq.',
+      'P.U. Trans.',
+      'P.U. Total',
+      'Total Mat.',
+      'Total M.O.',
+      'Total Eq.',
+      'Total Trans.',
+      'Suma Total',
+    ];
+    sheet.addRow(headers);
+    sheet.getRow(sheet.rowCount).font = { bold: true };
 
+    const capitulos = new Map<string, typeof presupuesto.items>();
     for (const item of presupuesto.items) {
-      sheet.addRow([
-        item.actividad.codigo,
+      const capitulo =
         item.actividad.capituloNombre ||
-          item.actividad.capituloCodigo ||
-          'GENERAL',
-        item.actividad.nombre,
-        item.actividad.unidad,
-        Number(item.cantidadProyecto),
-        Number(item.costoUnitarioCongelado),
-        Number(item.total),
+        item.actividad.capituloCodigo ||
+        'GENERAL';
+      if (!capitulos.has(capitulo)) capitulos.set(capitulo, []);
+      capitulos.get(capitulo)!.push(item);
+    }
+
+    for (const [capitulo, items] of capitulos) {
+      const capRow = sheet.addRow([`CAPÍTULO: ${capitulo}`]);
+      capRow.font = { bold: true };
+      sheet.mergeCells(capRow.number, 1, capRow.number, headers.length);
+
+      let capMat = 0;
+      let capMo = 0;
+      let capEq = 0;
+      let capTr = 0;
+      let capTotal = 0;
+
+      for (const item of items) {
+        const cant = Number(item.cantidadProyecto);
+        const linea = calcularTotalesLinea(item);
+
+        // Usamos las P.U. que ya calculó el backend (Total / Cantidad),
+        // para que el Excel coincida exactamente con la pantalla.
+        const puMat = Number(item.puMateriales ?? 0);
+        const puMo = Number(item.puManoObra ?? 0);
+        const puEq = Number(item.puEquipo ?? 0);
+        const puTr = Number(item.puTransporte ?? 0);
+        const puTotal = Number(item.puTotal ?? puMat + puMo + puEq + puTr);
+
+        const totalMat = Number(item.totalMateriales ?? linea.totalMateriales);
+        const totalMo = Number(item.totalManoObra ?? linea.totalManoObra);
+        const totalEq = Number(item.totalEquipo ?? linea.totalEquipo);
+        const totalTr = Number(item.totalTransporte ?? linea.totalTransporte);
+        const sumaTotal = Number(item.sumaTotal ?? linea.sumaTotal);
+
+        capMat += totalMat;
+        capMo += totalMo;
+        capEq += totalEq;
+        capTr += totalTr;
+        capTotal += sumaTotal;
+
+        sheet.addRow([
+          item.actividad.codigo,
+          capitulo,
+          item.actividad.nombre,
+          item.actividad.unidad,
+          cant,
+          puMat,
+          puMo,
+          puEq,
+          puTr,
+          puTotal,
+          totalMat,
+          totalMo,
+          totalEq,
+          totalTr,
+          sumaTotal,
+        ]);
+      }
+
+      const subRow = sheet.addRow([
+        '',
+        '',
+        `TOTAL CAPÍTULO — ${capitulo}`,
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        capMat,
+        capMo,
+        capEq,
+        capTr,
+        capTotal,
       ]);
+      subRow.font = { bold: true };
     }
 
     sheet.addRow([]);
     sheet.addRow(['RESUMEN FINANCIERO']);
     sheet.addRow(['Costos Directos', Number(presupuesto.costosDirectos)]);
     sheet.addRow(['Indirectos', Number(presupuesto.indirectos)]);
+    sheet.addRow(['Administración', Number(presupuesto.administracion)]);
     sheet.addRow(['Utilidad', Number(presupuesto.utilidad)]);
     sheet.addRow(['Imprevistos', Number(presupuesto.imprevistos)]);
     sheet.addRow(['Subtotal Neto', Number(presupuesto.subtotalNeto)]);
     sheet.addRow(['Impuestos', Number(presupuesto.impuestos)]);
     sheet.addRow(['PRECIO TOTAL', Number(presupuesto.total)]);
+
+    sheet.getColumn(5).numFmt = '#,##0.00';
+    for (let c = 6; c <= headers.length; c++) {
+      sheet.getColumn(c).numFmt = '#,##0.00';
+    }
 
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);

@@ -55,7 +55,7 @@ export class UpdateConfiguracionDto {
   correo?: string;
 
   @ApiPropertyOptional({
-    example: 15,
+    example: 5,
     description: 'Porcentaje de costos indirectos por defecto',
   })
   @IsOptional()
@@ -63,6 +63,16 @@ export class UpdateConfiguracionDto {
   @Min(0)
   @Max(100)
   pctIndirectosDef?: number;
+
+  @ApiPropertyOptional({
+    example: 8,
+    description: 'Porcentaje de administración por defecto',
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  pctAdministracionDef?: number;
 
   @ApiPropertyOptional({
     example: 10,
@@ -76,11 +86,21 @@ export class UpdateConfiguracionDto {
 
   @ApiPropertyOptional({
     example: 15,
-    description: 'Porcentaje de impuestos por defecto',
+    description: 'Porcentaje de IVA por defecto',
   })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(100)
   pctImpuestosDef?: number;
+
+  @ApiPropertyOptional({
+    example: 0,
+    description: 'Porcentaje de imprevistos por defecto',
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  pctImprevistosDef?: number;
 }
