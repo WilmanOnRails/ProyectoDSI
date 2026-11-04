@@ -58,13 +58,12 @@ export default function Activities() {
   const [selected, setSelected] = useState<ActivityApuData | null>(null);
   const [recursoId, setRecursoId] = useState("");
   const [cantidad, setCantidad] = useState("1");
+  const [tipoSeccion, setTipoSeccion] = useState<"material" | "mano_obra" | "equipo_transporte">("material");
   const [error, setError] = useState("");
   const [mensaje, setMensaje] = useState("");
 
-  // Filtros y agrupamiento
   const [proyectoFiltro, setProyectoFiltro] = useState<string>("ALL");
   const [busquedaRecurso, setBusquedaRecurso] = useState("");
-  const [tipoRecursoFiltro, setTipoRecursoFiltro] = useState("ALL");
   const [categoriaFiltro, setCategoriaFiltro] = useState("ALL");
 
   const loadActivities = () => {
@@ -125,7 +124,6 @@ export default function Activities() {
     }
   };
 
-  // Obtener lista única de proyectos asociados
   const proyectosMap = useMemo(() => {
     const map = new Map<string, string>();
     items.forEach((act) => {
@@ -139,7 +137,6 @@ export default function Activities() {
     return Array.from(map.entries()).map(([id, nombre]) => ({ id, nombre }));
   }, [items]);
 
-  // Filtrar actividades por proyecto
   const actividadesFiltradas = useMemo(() => {
     if (proyectoFiltro === "ALL") return items;
     return items.filter((act) =>
@@ -147,19 +144,14 @@ export default function Activities() {
     );
   }, [items, proyectoFiltro]);
 
-  // Categorías únicas disponibles en los recursos cargados
-  const categoriasUnicas = useMemo(() => {
-    const set = new Set<string>();
-    resources.forEach((r) => {
-      if (r.categoria) set.add(r.categoria);
-    });
-    return Array.from(set).sort();
-  }, [resources]);
-
-  // Filtrar recursos para el selector de APU de forma segura
-  const recursosFiltrados = useMemo(() => {
+  // Recursos filtrados según la sección activa (Materiales, Mano de Obra, Equipos/Transporte)
+  const recursosDisponibles = useMemo(() => {
     return resources.filter((r) => {
-      const matchTipo = tipoRecursoFiltro === "ALL" || r.tipo === tipoRecursoFiltro;
+      let matchTipo = false;
+      if (tipoSeccion === "material") matchTipo = r.tipo === "material";
+      else if (tipoSeccion === "mano_obra") matchTipo = r.tipo === "mano_obra";
+      else if (tipoSeccion === "equipo_transporte") matchTipo = r.tipo === "equipo" || r.tipo === "transporte";
+
       const matchCat = categoriaFiltro === "ALL" || r.categoria === categoriaFiltro;
       const texto = busquedaRecurso.toLowerCase();
       const desc = (r.descripcion || "").toLowerCase();
@@ -167,7 +159,20 @@ export default function Activities() {
       const matchTexto = !busquedaRecurso || desc.includes(texto) || cod.includes(texto);
       return matchTipo && matchCat && matchTexto;
     });
-  }, [resources, busquedaRecurso, tipoRecursoFiltro, categoriaFiltro]);
+  }, [resources, tipoSeccion, busquedaRecurso, categoriaFiltro]);
+
+  // Desglosar detalles actuales de APU
+  const detallesMateriales = useMemo(() => {
+    return selected?.apuDetalles?.filter((d) => d.recurso?.tipo === "material") || [];
+  }, [selected]);
+
+  const detallesManoDeObra = useMemo(() => {
+    return selected?.apuDetalles?.filter((d) => d.recurso?.tipo === "mano_obra") || [];
+  }, [selected]);
+
+  const detallesEquiposTransporte = useMemo(() => {
+    return selected?.apuDetalles?.filter((d) => d.recurso?.tipo === "equipo" || d.recurso?.tipo === "transporte") || [];
+  }, [selected]);
 
   return (
     <>
@@ -175,7 +180,7 @@ export default function Activities() {
         <div>
           <p className="eyebrow">CATÁLOGO DE OBRA</p>
           <h1>Actividades y Análisis de Precios Unitarios (APU)</h1>
-          <p className="muted">Gestión de partidas, capítulos y recetas de costos unitarios.</p>
+          <p className="muted">Desglose técnico por Materiales, Mano de Obra, Equipos y Transporte.</p>
         </div>
       </div>
 
@@ -183,7 +188,7 @@ export default function Activities() {
         <div className="panel-heading">
           <div>
             <h2>Actividades registradas ({actividadesFiltradas.length} de {items.length})</h2>
-            <p>{error || "Filtrá por proyecto o seleccioná una actividad para configurar su APU."}</p>
+            <p>{error || "Seleccioná una actividad para configurar sus costos unitarios."}</p>
           </div>
           <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "center" }}>
             <FolderKanban size={18} color="#64748b" />
@@ -195,9 +200,7 @@ export default function Activities() {
             >
               <option value="ALL">Todos los proyectos ({items.length})</option>
               {proyectosMap.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.nombre}
-                </option>
+                <option key={p.id} value={p.id}>{p.nombre}</option>
               ))}
             </select>
           </div>
@@ -211,22 +214,19 @@ export default function Activities() {
                 <th>Capítulo</th>
                 <th>Descripción</th>
                 <th>U.M.</th>
-                <th>Proyecto Asociado</th>
+                <th>Proyecto</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {actividadesFiltradas.map((x) => {
-                const nombreProyecto =
-                  x.presupuestoItems?.[0]?.presupuesto?.proyecto?.nombre || "Sin proyecto";
+                const nombreProyecto = x.presupuestoItems?.[0]?.presupuesto?.proyecto?.nombre || "Sin proyecto";
                 const capitulo = x.capituloNombre || x.capituloCodigo || "General";
                 return (
                   <tr key={x.id}>
                     <td className="code-cell">{x.codigo}</td>
                     <td>{capitulo}</td>
-                    <td className="truncate-cell" title={x.nombre}>
-                      {x.nombre}
-                    </td>
+                    <td className="truncate-cell" title={x.nombre}>{x.nombre}</td>
                     <td>{x.unidad}</td>
                     <td><span className="project-badge">{nombreProyecto}</span></td>
                     <td>
@@ -239,7 +239,7 @@ export default function Activities() {
               })}
               {!actividadesFiltradas.length && (
                 <tr>
-                  <td colSpan={6}>No hay actividades registradas para este filtro.</td>
+                  <td colSpan={6}>No hay actividades registradas.</td>
                 </tr>
               )}
             </tbody>
@@ -259,13 +259,38 @@ export default function Activities() {
             </button>
           </div>
 
-          <div className="apu-search-bar" style={{ gridTemplateColumns: "2fr 1fr 1fr" }}>
+          {/* Pestañas de secciones de APU */}
+          <div style={{ display: "flex", gap: "10px", marginTop: "16px", borderBottom: "1px solid #e2e8f0", paddingBottom: "12px" }}>
+            <button
+              className={tipoSeccion === "material" ? "primary-button" : "secondary-button"}
+              onClick={() => { setTipoSeccion("material"); setRecursoId(""); }}
+            >
+              1. Materiales ({detallesMateriales.length})
+            </button>
+            <button
+              className={tipoSeccion === "mano_obra" ? "primary-button" : "secondary-button"}
+              onClick={() => { setTipoSeccion("mano_obra"); setRecursoId(""); }}
+            >
+              2. Mano de Obra ({detallesManoDeObra.length})
+            </button>
+            <button
+              className={tipoSeccion === "equipo_transporte" ? "primary-button" : "secondary-button"}
+              onClick={() => { setTipoSeccion("equipo_transporte"); setRecursoId(""); }}
+            >
+              3. Equipos y Transporte ({detallesEquiposTransporte.length})
+            </button>
+          </div>
+
+          <div className="apu-search-bar" style={{ marginTop: "15px" }}>
             <div className="search-input-wrapper">
               <Search size={16} />
               <input
                 type="text"
                 className="text-input"
-                placeholder="Buscar por código o nombre de recurso..."
+                placeholder={
+                  tipoSeccion === "material" ? "Buscar material..." :
+                  tipoSeccion === "mano_obra" ? "Buscar cargo o mano de obra..." : "Buscar equipo o transporte..."
+                }
                 value={busquedaRecurso}
                 onChange={(e) => setBusquedaRecurso(e.target.value)}
               />
@@ -274,38 +299,25 @@ export default function Activities() {
               <Filter size={16} />
               <select
                 className="text-input"
-                value={tipoRecursoFiltro}
-                onChange={(e) => setTipoRecursoFiltro(e.target.value)}
-              >
-                <option value="ALL">Todos los tipos</option>
-                <option value="material">Materiales</option>
-                <option value="mano_obra">Mano de Obra</option>
-                <option value="equipo">Equipos</option>
-                <option value="transporte">Transporte</option>
-              </select>
-            </div>
-            <div className="filter-input-wrapper">
-              <select
-                className="text-input"
                 value={categoriaFiltro}
                 onChange={(e) => setCategoriaFiltro(e.target.value)}
               >
                 <option value="ALL">Todas las categorías</option>
-                {categoriasUnicas.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
+                <option value="Materiales de Construcción">Materiales de Construcción</option>
+                <option value="Mano de Obra">Mano de Obra</option>
+                <option value="Equipos y Maquinaria">Equipos y Maquinaria</option>
+                <option value="Transporte y Acarreo">Transporte y Acarreo</option>
               </select>
             </div>
           </div>
 
           <div className="apu-form-grid">
             <label>
-              Seleccionar recurso ({recursosFiltrados.length} disponibles)
+              {tipoSeccion === "material" ? "Seleccionar Material" :
+               tipoSeccion === "mano_obra" ? "Seleccionar Cargo / Mano de Obra" : "Seleccionar Equipo / Transporte"} ({recursosDisponibles.length} disponibles)
               <select className="text-input" value={recursoId} onChange={(e) => setRecursoId(e.target.value)}>
-                <option value="">-- Seleccionar recurso del catálogo --</option>
-                {recursosFiltrados.map((r) => (
+                <option value="">-- Seleccionar de la lista --</option>
+                {recursosDisponibles.map((r) => (
                   <option key={r.id} value={r.id}>
                     [{r.tipo.toUpperCase()}] {r.codigo} - {r.descripcion} ({r.unidad}) — C$ {Number(r.costoUnitario || 0).toFixed(2)}
                   </option>
@@ -313,7 +325,8 @@ export default function Activities() {
               </select>
             </label>
             <label>
-              Cantidad por unidad
+              {tipoSeccion === "material" ? "Cantidad por unidad" :
+               tipoSeccion === "mano_obra" ? "Horas-Hombre (HH) / Rendimiento" : "Horas-Máquina (HM) / Viajes"}
               <input
                 className="text-input"
                 type="number"
@@ -324,37 +337,37 @@ export default function Activities() {
               />
             </label>
             <button className="primary-button add-apu-btn" onClick={() => void addApuItem()}>
-              <Plus size={16} /> Agregar al APU
+              <Plus size={16} /> Agregar a la partida
             </button>
           </div>
 
           {mensaje && <div className="import-success">{mensaje}</div>}
           {error && <div className="import-error">{error}</div>}
 
-          <div className="table-wrapper" style={{ marginTop: "16px" }}>
+          {/* Tabla 1: Materiales */}
+          <h3 style={{ marginTop: "24px", fontSize: "15px", color: "#172338" }}>Materiales de la Actividad</h3>
+          <div className="table-wrapper">
             <table>
               <thead>
                 <tr>
-                  <th>Tipo</th>
                   <th>Código</th>
-                  <th>Descripción del Recurso</th>
+                  <th>Descripción del Material</th>
                   <th>U.M.</th>
-                  <th>Cantidad</th>
+                  <th>Cant. / Unidad</th>
                   <th>Precio Unitario</th>
                   <th>Subtotal</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
-                {(selected.apuDetalles || []).map((det) => {
+                {detallesMateriales.map((det) => {
                   const precio = Number(det.recurso?.costoUnitario || 0);
                   const subtotal = Number(det.cantidadPorUnidad) * precio;
                   return (
                     <tr key={det.id}>
-                      <td><span className="badge">{det.recurso?.tipo || "recurso"}</span></td>
-                      <td className="code-cell">{det.recurso?.codigo || "—"}</td>
-                      <td><strong>{det.recurso?.descripcion || "Sin descripción"}</strong></td>
-                      <td>{det.recurso?.unidad || "—"}</td>
+                      <td className="code-cell">{det.recurso?.codigo}</td>
+                      <td><strong>{det.recurso?.descripcion}</strong></td>
+                      <td>{det.recurso?.unidad}</td>
                       <td>{det.cantidadPorUnidad}</td>
                       <td>{money(precio)}</td>
                       <td>{money(subtotal)}</td>
@@ -366,21 +379,103 @@ export default function Activities() {
                     </tr>
                   );
                 })}
-                {!selected.apuDetalles?.length && (
-                  <tr>
-                    <td colSpan={8}>Este APU aún no tiene recursos asignados.</td>
-                  </tr>
+                {!detallesMateriales.length && (
+                  <tr><td colSpan={7}>No hay materiales agregados en este APU.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Tabla 2: Mano de Obra */}
+          <h3 style={{ marginTop: "24px", fontSize: "15px", color: "#172338" }}>Mano de Obra (Cargos, Horas-Hombre y Salario)</h3>
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Cargo / Descripción</th>
+                  <th>U.M.</th>
+                  <th>Horas-Hombre (HH)</th>
+                  <th>Salario x Hora</th>
+                  <th>Monto Total</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {detallesManoDeObra.map((det) => {
+                  const salarioHora = Number(det.recurso?.costoUnitario || 0);
+                  const monto = Number(det.cantidadPorUnidad) * salarioHora;
+                  return (
+                    <tr key={det.id}>
+                      <td className="code-cell">{det.recurso?.codigo}</td>
+                      <td><strong>{det.recurso?.descripcion}</strong></td>
+                      <td>{det.recurso?.unidad}</td>
+                      <td>{det.cantidadPorUnidad}</td>
+                      <td>{money(salarioHora)}</td>
+                      <td>{money(monto)}</td>
+                      <td>
+                        <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!detallesManoDeObra.length && (
+                  <tr><td colSpan={7}>No hay mano de obra agregada en este APU.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Tabla 3: Equipos y Transporte */}
+          <h3 style={{ marginTop: "24px", fontSize: "15px", color: "#172338" }}>Equipos y Transporte (Horas-Máquina / Renta Horaria)</h3>
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Descripción / Maquinaria</th>
+                  <th>U.M.</th>
+                  <th>Horas-Máquina (HM) / Viajes</th>
+                  <th>Renta Horaria</th>
+                  <th>Monto Total</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {detallesEquiposTransporte.map((det) => {
+                  const renta = Number(det.recurso?.costoUnitario || 0);
+                  const monto = Number(det.cantidadPorUnidad) * renta;
+                  return (
+                    <tr key={det.id}>
+                      <td className="code-cell">{det.recurso?.codigo}</td>
+                      <td><strong>{det.recurso?.descripcion}</strong></td>
+                      <td>{det.recurso?.unidad}</td>
+                      <td>{det.cantidadPorUnidad}</td>
+                      <td>{money(renta)}</td>
+                      <td>{money(monto)}</td>
+                      <td>
+                        <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!detallesEquiposTransporte.length && (
+                  <tr><td colSpan={7}>No hay equipos ni transporte agregados en este APU.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
 
           <div className="financial-summary">
-            <p>Materiales: <strong>{money(selected.apuCostoCache?.costoMateriales || 0)}</strong></p>
-            <p>Mano de Obra: <strong>{money(selected.apuCostoCache?.costoManoObra || 0)}</strong></p>
-            <p>Equipos: <strong>{money(selected.apuCostoCache?.costoEquipo || 0)}</strong></p>
-            <p>Transporte: <strong>{money(selected.apuCostoCache?.costoTransporte || 0)}</strong></p>
-            <p className="total-line">Costo Unitario Total: <strong>{money(selected.apuCostoCache?.costoTotal || 0)}</strong></p>
+            <p>Costo Materiales: <strong>{money(selected.apuCostoCache?.costoMateriales || 0)}</strong></p>
+            <p>Costo Mano de Obra: <strong>{money(selected.apuCostoCache?.costoManoObra || 0)}</strong></p>
+            <p>Costo Equipos: <strong>{money(selected.apuCostoCache?.costoEquipo || 0)}</strong></p>
+            <p>Costo Transporte: <strong>{money(selected.apuCostoCache?.costoTransporte || 0)}</strong></p>
+            <p className="total-line">Costo Unitario Total (P.U.): <strong>{money(selected.apuCostoCache?.costoTotal || 0)}</strong></p>
           </div>
         </section>
       )}
