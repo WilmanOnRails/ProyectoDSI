@@ -85,11 +85,15 @@ export class ImportacionesService {
             nombrePresupuesto?.trim() ||
             `Presupuesto importado - ${nombreArchivo}`,
           pctIndirectos:
-            configuracion?.pctIndirectosDef ?? new Prisma.Decimal(15),
+            configuracion?.pctIndirectosDef ?? new Prisma.Decimal(5),
+          pctAdministracion:
+            configuracion?.pctAdministracionDef ?? new Prisma.Decimal(8),
           pctUtilidad:
             configuracion?.pctUtilidadDef ?? new Prisma.Decimal(10),
           pctImpuestos:
             configuracion?.pctImpuestosDef ?? new Prisma.Decimal(15),
+          pctImprevistos:
+            configuracion?.pctImprevistosDef ?? new Prisma.Decimal(0),
         },
       });
 
