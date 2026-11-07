@@ -4,30 +4,57 @@ import { LoginDto } from './dto/login.dto.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import * as bcrypt from 'bcryptjs';
 
+export interface AuthenticatedUser {
+  id: string;
+  nombre: string;
+  email: string;
+  rol: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  user: AuthenticatedUser;
+}
+
 @Injectable()
 export class AuthService {
-    constructor(
-        private jwtService: JwtService,
-        private prisma: PrismaService) { }
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly prisma: PrismaService,
+  ) {}
 
-    async validateUser(user: LoginDto) {
-        const foundUser = await this.prisma.usuario.findUnique({
-            where: {
-                email: user.email
-            }
-        });
-        if (!foundUser) return null;
+  async login(credentials: LoginDto): Promise<LoginResponse> {
+    const user = await this.prisma.usuario.findUnique({
+      where: { email: credentials.email },
+    });
 
-        const isPasswordValid = await bcrypt.compare(user.password, foundUser.passwordHash);
-
-        if (isPasswordValid) {
-            return this.jwtService.sign({
-                id: foundUser.id,
-                email: foundUser.email,
-                role: foundUser.rol,
-            });
-        } else {
-            throw new UnauthorizedException('Credenciales inválidas');
-        }
+    if (!user || !user.activo) {
+      throw new UnauthorizedException('Correo o contraseña incorrectos');
     }
+
+    const passwordMatches = await bcrypt.compare(
+      credentials.password,
+      user.passwordHash,
+    );
+
+    if (!passwordMatches) {
+      throw new UnauthorizedException('Correo o contraseña incorrectos');
+    }
+
+    const accessToken = await this.jwtService.signAsync({
+      id: user.id,
+      email: user.email,
+      role: user.rol,
+    });
+
+    return {
+      access_token: accessToken,
+      user: {
+        id: user.id,
+        nombre: user.nombre,
+        email: user.email,
+        rol: user.rol,
+      },
+    };
+  }
 }

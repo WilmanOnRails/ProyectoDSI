@@ -116,6 +116,14 @@ export class ApusService {
 
       return eliminado;
     });
+
+    if (!actividad) {
+      throw new NotFoundException(
+        `Actividad con ID ${actividadId} no encontrada`,
+      );
+    }
+
+    return actividad;
   }
 
   private async verificarActividadYRecurso(
