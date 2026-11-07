@@ -36,8 +36,26 @@ export class UpdateConfiguracionDto {
   @MaxLength(3)
   moneda?: string;
 
+  @ApiPropertyOptional({ example: '+505 2222-2222' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  telefono?: string;
+
+  @ApiPropertyOptional({ example: 'Managua, Nicaragua' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  direccion?: string;
+
+  @ApiPropertyOptional({ example: 'contacto@constructora.com' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  correo?: string;
+
   @ApiPropertyOptional({
-    example: 15,
+    example: 5,
     description: 'Porcentaje de costos indirectos por defecto',
   })
   @IsOptional()
@@ -45,6 +63,16 @@ export class UpdateConfiguracionDto {
   @Min(0)
   @Max(100)
   pctIndirectosDef?: number;
+
+  @ApiPropertyOptional({
+    example: 8,
+    description: 'Porcentaje de administración por defecto',
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  pctAdministracionDef?: number;
 
   @ApiPropertyOptional({
     example: 10,
@@ -58,11 +86,21 @@ export class UpdateConfiguracionDto {
 
   @ApiPropertyOptional({
     example: 15,
-    description: 'Porcentaje de impuestos por defecto',
+    description: 'Porcentaje de IVA por defecto',
   })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(100)
   pctImpuestosDef?: number;
+
+  @ApiPropertyOptional({
+    example: 0,
+    description: 'Porcentaje de imprevistos por defecto',
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  pctImprevistosDef?: number;
 }

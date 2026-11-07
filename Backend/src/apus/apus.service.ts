@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { calcularApu } from '../calculos/calculos.js';
+import { calcularApu, calcularResumenPresupuesto, calcularTotalesLinea } from '../calculos/calculos.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateApusDto } from './dto/create-apus.dto.js';
 import { UpdateApusDto } from './dto/update-apus.dto.js';
@@ -116,6 +116,14 @@ export class ApusService {
 
       return eliminado;
     });
+
+    if (!actividad) {
+      throw new NotFoundException(
+        `Actividad con ID ${actividadId} no encontrada`,
+      );
+    }
+
+    return actividad;
   }
 
   private async verificarActividadYRecurso(
@@ -183,5 +191,90 @@ export class ApusService {
         fechaCalculo: new Date(),
       },
     });
+
+    // Propagación automática a los ítems de presupuesto que usan esta actividad
+    const presupuestoItems = await tx.presupuestoItem.findMany({
+      where: { actividadId },
+    });
+
+    // Los porcentajes salen del módulo de Configuración.
+    const config = await tx.configuracion.findUnique({ where: { id: 1 } });
+    const porcentajes = {
+      pctIndirectos: config?.pctIndirectosDef ?? new Prisma.Decimal(5),
+      pctAdministracion:
+        config?.pctAdministracionDef ?? new Prisma.Decimal(8),
+      pctUtilidad: config?.pctUtilidadDef ?? new Prisma.Decimal(10),
+      pctImprevistos: config?.pctImprevistosDef ?? new Prisma.Decimal(0),
+      pctImpuestos: config?.pctImpuestosDef ?? new Prisma.Decimal(15),
+    };
+
+    for (const item of presupuestoItems) {
+      const costoUnitarioCongelado = costoCalculado.costoTotal;
+      const totalItem = costoCalculado.costoMateriales
+        .add(costoCalculado.costoManoObra)
+        .add(costoCalculado.costoEquipo)
+        .add(costoCalculado.costoTransporte)
+        .mul(item.cantidadProyecto)
+        .toDecimalPlaces(2);
+
+      await tx.presupuestoItem.update({
+        where: { id: item.id },
+        data: {
+          costoUnitarioCongelado,
+          costoMaterialesCong: costoCalculado.costoMateriales,
+          costoManoObraCong: costoCalculado.costoManoObra,
+          costoEquipoCong: costoCalculado.costoEquipo,
+          costoTransporteCong: costoCalculado.costoTransporte,
+          total: totalItem,
+        },
+      });
+
+      const presupuesto = await tx.presupuesto.findUnique({
+        where: { id: item.presupuestoId },
+        include: { items: true },
+      });
+
+      if (presupuesto) {
+        // Sincronizamos también el total guardado de cada línea con la suma
+        // de sus componentes (Total Mat + M.O. + Eq. + Trans).
+        for (const pi of presupuesto.items) {
+          const linea = calcularTotalesLinea(pi);
+          if (!pi.total.equals(linea.sumaTotal)) {
+            await tx.presupuestoItem.update({
+              where: { id: pi.id },
+              data: { total: linea.sumaTotal },
+            });
+          }
+        }
+
+        const resumen = calcularResumenPresupuesto(
+          presupuesto.items,
+          porcentajes,
+        );
+
+        await tx.presupuesto.update({
+          where: { id: presupuesto.id },
+          data: {
+            pctIndirectos: porcentajes.pctIndirectos,
+            pctAdministracion: porcentajes.pctAdministracion,
+            pctUtilidad: porcentajes.pctUtilidad,
+            pctImprevistos: porcentajes.pctImprevistos,
+            pctImpuestos: porcentajes.pctImpuestos,
+            costosDirectos: resumen.costosDirectos,
+            costoMateriales: resumen.costoMateriales,
+            costoManoObra: resumen.costoManoObra,
+            costoEquipo: resumen.costoEquipo,
+            costoTransporte: resumen.costoTransporte,
+            indirectos: resumen.indirectos,
+            administracion: resumen.administracion,
+            utilidad: resumen.utilidad,
+            imprevistos: resumen.imprevistos,
+            subtotalNeto: resumen.subtotalNeto,
+            impuestos: resumen.impuestos,
+            total: resumen.total,
+          },
+        });
+      }
+    }
   }
 }

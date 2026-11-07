@@ -10,6 +10,9 @@ import { ApusModule } from './apus/apus.module.js';
 import { HistorialPreciosModule } from './historial-precios/historial-precios.module.js';
 import { ConfiguracionModule } from './configuracion/configuracion.module.js';
 import { RecursosModule } from './recursos/recursos.module.js';
+import { PresupuestosModule } from './presupuestos/presupuestos.module.js';
+import { ScrapingModule } from './scraping/scraping.module.js';
+import { ImportacionesModule } from './importaciones/importaciones.module.js';
 
 @Module({
   imports: [
@@ -26,6 +29,9 @@ import { RecursosModule } from './recursos/recursos.module.js';
     HistorialPreciosModule,
     ConfiguracionModule,
     RecursosModule,
+    PresupuestosModule,
+    ScrapingModule,
+    ImportacionesModule,
   ],
   controllers: [HealthController],
 })
