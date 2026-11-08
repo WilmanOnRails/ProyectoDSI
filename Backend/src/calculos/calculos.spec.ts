@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   calcularApu,
   calcularResumenPresupuesto,
+  calcularTotalesLinea,
   calcularTotalesPresupuesto,
   type DetalleApu,
 } from './calculos.js';
@@ -219,17 +220,17 @@ describe('calcularResumenPresupuesto', () => {
     const items = [
       {
         cantidadProyecto: 10,
+        costoMaterialesCong: 1000,
+        costoManoObraCong: 500,
+        costoEquipoCong: 200,
+        costoTransporteCong: 100,
+      },
+      {
+        cantidadProyecto: 2,
         costoMaterialesCong: 100,
         costoManoObraCong: 50,
         costoEquipoCong: 20,
         costoTransporteCong: 10,
-      },
-      {
-        cantidadProyecto: 2,
-        costoMaterialesCong: 50,
-        costoManoObraCong: 25,
-        costoEquipoCong: 10,
-        costoTransporteCong: 5,
       },
     ];
 
@@ -241,12 +242,27 @@ describe('calcularResumenPresupuesto', () => {
       pctImpuestos: 15,
     });
 
-    // Línea 1: mat=1000, mo=500, eq=200, tr=100, suma=1800
-    // Línea 2: mat=100,  mo=50,  eq=20,  tr=10,  suma=180
+    // Los costos guardados ya son los totales congelados de cada línea.
     expect(resumen.costoMateriales.toString()).toBe('1100');
     expect(resumen.costoManoObra.toString()).toBe('550');
     expect(resumen.costoEquipo.toString()).toBe('220');
     expect(resumen.costoTransporte.toString()).toBe('110');
     expect(resumen.costosDirectos.toString()).toBe('1980');
+  });
+
+  it('suma los costos totales visibles sin multiplicarlos otra vez por la cantidad', () => {
+    const linea = calcularTotalesLinea({
+      cantidadProyecto: '3710.36',
+      costoMaterialesCong: '522.57',
+      costoManoObraCong: '74.50',
+      costoEquipoCong: '0',
+      costoTransporteCong: '0',
+    });
+
+    expect(linea.puMateriales.toString()).toBe('0.14');
+    expect(linea.puManoObra.toString()).toBe('0.02');
+    expect(linea.totalMateriales.toString()).toBe('519.45');
+    expect(linea.totalManoObra.toString()).toBe('74.21');
+    expect(linea.sumaTotal.toString()).toBe('593.66');
   });
 });

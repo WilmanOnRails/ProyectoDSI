@@ -44,6 +44,7 @@ export interface ResultadoPresupuesto {
 /** Datos mínimos de una línea de presupuesto para calcular sus totales. */
 export interface ItemPresupuestoCalculo {
   cantidadProyecto: Decimal | number | string;
+  /** Costos unitarios del APU congelados al agregar la línea al presupuesto. */
   costoMaterialesCong: Decimal | number | string;
   costoManoObraCong: Decimal | number | string;
   costoEquipoCong: Decimal | number | string;
@@ -51,6 +52,11 @@ export interface ItemPresupuestoCalculo {
 }
 
 export interface TotalesLineaPresupuesto {
+  puMateriales: Decimal;
+  puManoObra: Decimal;
+  puEquipo: Decimal;
+  puTransporte: Decimal;
+  puTotal: Decimal;
   totalMateriales: Decimal;
   totalManoObra: Decimal;
   totalEquipo: Decimal;
@@ -212,22 +218,34 @@ export function calcularTotalesPresupuesto(
 /**
  * Calcula los totales de UNA línea del desglose.
  *
- * Cada categoría se multiplica por la cantidad del proyecto y se redondea a
- * 2 decimales. La "Suma Total" es la suma de esas cuatro categorías ya
- * redondeadas, para que capítulos y costo directo cuadren exactamente con lo
- * que se muestra en pantalla.
+ * Los campos congelados contienen los costos unitarios del APU. Se calcula
+ * primero el P.U. mostrado (2 decimales) y luego el total visible de cada
+ * categoría multiplicando ese P.U. por la cantidad del proyecto.
  */
 export function calcularTotalesLinea(
   item: ItemPresupuestoCalculo,
 ): TotalesLineaPresupuesto {
-  const cant = d(item.cantidadProyecto);
-
-  const totalMateriales = redondear(d(item.costoMaterialesCong).mul(cant));
-  const totalManoObra = redondear(d(item.costoManoObraCong).mul(cant));
-  const totalEquipo = redondear(d(item.costoEquipoCong).mul(cant));
-  const totalTransporte = redondear(d(item.costoTransporteCong).mul(cant));
+  const cantidad = d(item.cantidadProyecto);
+  const unitario = (costo: Decimal | number | string) =>
+    cantidad.gt(0) ? redondear(d(costo).div(cantidad)) : new Decimal(0);
+  const puMateriales = unitario(item.costoMaterialesCong);
+  const puManoObra = unitario(item.costoManoObraCong);
+  const puEquipo = unitario(item.costoEquipoCong);
+  const puTransporte = unitario(item.costoTransporteCong);
+  const totalMateriales = redondear(puMateriales.mul(cantidad));
+  const totalManoObra = redondear(puManoObra.mul(cantidad));
+  const totalEquipo = redondear(puEquipo.mul(cantidad));
+  const totalTransporte = redondear(puTransporte.mul(cantidad));
 
   return {
+    puMateriales,
+    puManoObra,
+    puEquipo,
+    puTransporte,
+    puTotal: puMateriales
+      .add(puManoObra)
+      .add(puEquipo)
+      .add(puTransporte),
     totalMateriales,
     totalManoObra,
     totalEquipo,
