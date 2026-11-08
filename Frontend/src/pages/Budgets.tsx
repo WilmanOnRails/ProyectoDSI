@@ -50,8 +50,34 @@ type Budget = {
 const money = (v: string | number) =>
   `C$ ${Number(v || 0).toLocaleString("es-NI", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-/** Redondea a 2 decimales igual que el backend (Decimal ROUND_HALF_UP). */
-const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+const toCents = (value: string | number) => Math.round(Number(value || 0) * 100);
+const fromCents = (value: number) => value / 100;
+const sumMoney = (...values: (string | number)[]) =>
+  fromCents(values.reduce<number>((sum, value) => sum + toCents(value), 0));
+const lineTotal = (
+  item: Item,
+  total: string | number | undefined,
+  pu: string | number | undefined,
+  frozenCost: string | number,
+) => {
+  if (total !== undefined) return Number(total);
+  const quantity = Number(item.cantidadProyecto || 0);
+  const unitPrice =
+    pu !== undefined
+      ? Number(pu)
+      : quantity > 0
+        ? fromCents(toCents(frozenCost) / quantity)
+        : 0;
+  return fromCents(toCents(unitPrice) * Math.round(quantity * 100) / 100);
+};
+const totalMatItem = (item: Item) =>
+  lineTotal(item, item.totalMateriales, item.puMateriales, item.costoMaterialesCong);
+const totalMoItem = (item: Item) =>
+  lineTotal(item, item.totalManoObra, item.puManoObra, item.costoManoObraCong);
+const totalEqItem = (item: Item) =>
+  lineTotal(item, item.totalEquipo, item.puEquipo, item.costoEquipoCong);
+const totalTrItem = (item: Item) =>
+  lineTotal(item, item.totalTransporte, item.puTransporte, item.costoTransporteCong);
 
 export default function Budgets() {
   const [items, setItems] = useState<Budget[]>([]);
@@ -109,28 +135,11 @@ export default function Budgets() {
     });
 
     return Array.from(map.entries()).map(([capKey, data]) => {
-      const totalMatItem = (i: Item) =>
-      i.totalMateriales !== undefined
-        ? Number(i.totalMateriales)
-        : r2(Number(i.puMateriales) * Number(i.cantidadProyecto));
-      const totalMoItem = (i: Item) =>
-        i.totalManoObra !== undefined
-          ? Number(i.totalManoObra)
-          : r2(Number(i.puManoObra) * Number(i.cantidadProyecto));
-      const totalEqItem = (i: Item) =>
-        i.totalEquipo !== undefined
-          ? Number(i.totalEquipo)
-          : r2(Number(i.puEquipo) * Number(i.cantidadProyecto));
-      const totalTrItem = (i: Item) =>
-        i.totalTransporte !== undefined
-          ? Number(i.totalTransporte)
-          : r2(Number(i.puTransporte) * Number(i.cantidadProyecto));
-
-      const subMat = data.items.reduce((acc, i) => acc + totalMatItem(i), 0);
-      const subMo = data.items.reduce((acc, i) => acc + totalMoItem(i), 0);
-      const subEq = data.items.reduce((acc, i) => acc + totalEqItem(i), 0);
-      const subTr = data.items.reduce((acc, i) => acc + totalTrItem(i), 0);
-      const subTotal = r2(subMat + subMo + subEq + subTr);
+      const subMat = fromCents(data.items.reduce((sum, i) => sum + toCents(totalMatItem(i)), 0));
+      const subMo = fromCents(data.items.reduce((sum, i) => sum + toCents(totalMoItem(i)), 0));
+      const subEq = fromCents(data.items.reduce((sum, i) => sum + toCents(totalEqItem(i)), 0));
+      const subTr = fromCents(data.items.reduce((sum, i) => sum + toCents(totalTrItem(i)), 0));
+      const subTotal = sumMoney(subMat, subMo, subEq, subTr);
 
       return {
         capituloNombre: capKey,
@@ -254,40 +263,16 @@ export default function Budgets() {
                     </tr>
                     {cap.items.map((x, i) => {
                       const cant = Number(x.cantidadProyecto || 0);
-
-                      // El backend ya devuelve los totales y las P.U.
-                      // P.U. = Total de la categoría / Cantidad.
-                      const totMat =
-                        x.totalMateriales !== undefined
-                          ? Number(x.totalMateriales)
-                          : r2(Number(x.costoMaterialesCong || 0) * cant);
-
-// Use the P.U. Mat value that the backend calculated (Total / Cantidad).
-// This ensures consistency between P.U. and Total columns.
-                      const totalMatDisplay =
-                        x.puMateriales !== undefined
-                          ? r2(Number(x.puMateriales) * cant)
-                          : totMat;
-                      // Use the P.U. values for the other cost categories, also multiplied by quantity
-                      // to ensure consistency between P.U. and Total columns.
-                      const totMo =
-                        x.puManoObra !== undefined
-                          ? r2(Number(x.puManoObra) * cant)
-                          : r2(Number(x.costoManoObraCong || 0) * cant);
-                      const totEq =
-                        x.puEquipo !== undefined
-                          ? r2(Number(x.puEquipo) * cant)
-                          : r2(Number(x.costoEquipoCong || 0) * cant);
-                      const totTr =
-                        x.puTransporte !== undefined
-                          ? r2(Number(x.puTransporte) * cant)
-                          : r2(Number(x.costoTransporteCong || 0) * cant);
+                      const totalMatDisplay = totalMatItem(x);
+                      const totMo = totalMoItem(x);
+                      const totEq = totalEqItem(x);
+                      const totTr = totalTrItem(x);
 
                       const puMat =
                         x.puMateriales !== undefined
                           ? Number(x.puMateriales)
                           : cant > 0
-                            ? totMat / cant
+                            ? totalMatDisplay / cant
                             : 0;
                       const puMo =
                         x.puManoObra !== undefined
@@ -309,12 +294,7 @@ export default function Budgets() {
                             : 0;
 
                       // Suma Total = Total Mat + Total M.O. + Total Eq. + Total Trans.
-                      // Usamos los valores Total* que ya calculamos (pu* × cantidad).
-                      const totalMatValue = x.totalMateriales !== undefined ? Number(x.totalMateriales) : r2(totMat);
-                      const totalMoValue = x.totalManoObra !== undefined ? Number(x.totalManoObra) : r2(totMo);
-                      const totalEqValue = x.totalEquipo !== undefined ? Number(x.totalEquipo) : r2(totEq);
-                      const totalTrValue = x.totalTransporte !== undefined ? Number(x.totalTransporte) : r2(totTr);
-                      const totGen = r2(totalMatValue + totalMoValue + totalEqValue + totalTrValue);
+                      const totGen = sumMoney(totalMatDisplay, totMo, totEq, totTr);
                       const puTot =
                         x.puTotal !== undefined
                           ? Number(x.puTotal)
