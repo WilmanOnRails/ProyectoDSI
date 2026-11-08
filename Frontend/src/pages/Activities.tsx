@@ -188,7 +188,7 @@ export default function Activities() {
         <div className="panel-heading">
           <div>
             <h2>Actividades registradas ({actividadesFiltradas.length} de {items.length})</h2>
-            <p>{error || "Seleccioná una actividad para configurar sus costos unitarios."}</p>
+            <p>{error || mensaje || "Seleccioná una actividad para configurar sus costos unitarios."}</p>
           </div>
           <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "center" }}>
             <FolderKanban size={18} color="#64748b" />
@@ -253,6 +253,12 @@ export default function Activities() {
             <div>
               <h2>APU: {selected.codigo} - {selected.nombre}</h2>
               <p>Capítulo: <strong>{selected.capituloNombre || selected.capituloCodigo || "General"}</strong> · Unidad: <strong>{selected.unidad}</strong></p>
+              <p className="muted">
+                Las cantidades de HH y HM representan tiempo promedio por unidad
+                de actividad; los APUs automáticos son editables y deben revisarse.
+                Agregue los materiales que falten: los que no tengan precio en el
+                catálogo no se incluyen en el costo.
+              </p>
             </div>
             <button className="secondary-button" onClick={() => setSelected(null)}>
               Cerrar APU
@@ -326,7 +332,7 @@ export default function Activities() {
             </label>
             <label>
               {tipoSeccion === "material" ? "Cantidad por unidad" :
-               tipoSeccion === "mano_obra" ? "Horas-Hombre (HH) / Rendimiento" : "Horas-Máquina (HM) / Viajes"}
+               tipoSeccion === "mano_obra" ? "HH por unidad de actividad" : "HM por unidad de actividad / viajes"}
               <input
                 className="text-input"
                 type="number"
@@ -353,7 +359,7 @@ export default function Activities() {
                   <th>Código</th>
                   <th>Descripción del Material</th>
                   <th>U.M.</th>
-                  <th>Cant. / Unidad</th>
+                  <th>Cant. / Unidad de actividad</th>
                   <th>Precio Unitario</th>
                   <th>Subtotal</th>
                   <th></th>
@@ -395,7 +401,7 @@ export default function Activities() {
                   <th>Código</th>
                   <th>Cargo / Descripción</th>
                   <th>U.M.</th>
-                  <th>Horas-Hombre (HH)</th>
+                  <th>Horas-Hombre (HH) / unidad</th>
                   <th>Salario x Hora</th>
                   <th>Monto Total</th>
                   <th></th>
@@ -437,7 +443,7 @@ export default function Activities() {
                   <th>Código</th>
                   <th>Descripción / Maquinaria</th>
                   <th>U.M.</th>
-                  <th>Horas-Máquina (HM) / Viajes</th>
+                  <th>Horas-Máquina (HM) / unidad o viajes</th>
                   <th>Renta Horaria</th>
                   <th>Monto Total</th>
                   <th></th>
