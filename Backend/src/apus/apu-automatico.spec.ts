@@ -13,6 +13,18 @@ const recursos: RecursoApuAutomatico[] = [
     costoUnitario: new Prisma.Decimal('62.50'),
   },
   {
+    id: 'topografo',
+    tipo: TipoRecurso.mano_obra,
+    descripcion: 'Topógrafo',
+    costoUnitario: new Prisma.Decimal('100.00'),
+  },
+  {
+    id: 'dibujante',
+    tipo: TipoRecurso.mano_obra,
+    descripcion: 'Dibujante técnico',
+    costoUnitario: new Prisma.Decimal('100.00'),
+  },
+  {
     id: 'oficial',
     tipo: TipoRecurso.mano_obra,
     descripcion: 'Oficial albañil',
@@ -29,6 +41,18 @@ const recursos: RecursoApuAutomatico[] = [
     tipo: TipoRecurso.equipo,
     descripcion: 'Herramientas menores',
     costoUnitario: new Prisma.Decimal('80.00'),
+  },
+  {
+    id: 'equipo-topografia',
+    tipo: TipoRecurso.equipo,
+    descripcion: 'Equipo de topografía',
+    costoUnitario: new Prisma.Decimal('250.00'),
+  },
+  {
+    id: 'estacion-total',
+    tipo: TipoRecurso.equipo,
+    descripcion: 'Estación total',
+    costoUnitario: new Prisma.Decimal('250.00'),
   },
   {
     id: 'retro',
@@ -99,22 +123,51 @@ const recursos: RecursoApuAutomatico[] = [
 ];
 
 describe('construirApuAutomatico', () => {
-  it('deriva HH y HM por unidad de la receta de limpieza del Excel', () => {
+  it('aplica un mínimo de una HH o HM por unidad aunque cambie la cantidad del proyecto', () => {
     const resultado = construirApuAutomatico(
       'Limpieza inicial.',
       'm2',
       recursos,
+      '3710.36',
+    );
+    const resultadoUnaUnidad = construirApuAutomatico(
+      'Limpieza inicial.',
+      'm2',
+      recursos,
+      1,
     );
 
     expect(resultado.metodo).toBe('referencia');
     expect(
       resultado.detalles.find((detalle) => detalle.recursoId === 'ayudante')
         ?.cantidadPorUnidad.toString(),
-    ).toBe('0.0144');
+    ).toBe('1');
+    expect(
+      resultadoUnaUnidad.detalles.find((detalle) => detalle.recursoId === 'ayudante')
+        ?.cantidadPorUnidad.toString(),
+    ).toBe('1');
     expect(
       resultado.detalles.find((detalle) => detalle.recursoId === 'camion')
         ?.cantidadPorUnidad.toString(),
-    ).toBe('0.0016');
+    ).toBe('1');
+    expect(
+      resultadoUnaUnidad.detalles.find((detalle) => detalle.recursoId === 'camion')
+        ?.cantidadPorUnidad.toString(),
+    ).toBe('1');
+  });
+
+  it('eleva a uno o más las cantidades de materiales por unidad de actividad', () => {
+    const resultado = construirApuAutomatico(
+      'Trazo y nivelacion',
+      'm2',
+      recursos,
+      1,
+    );
+
+    expect(
+      resultado.detalles.find((detalle) => detalle.recursoId === 'madera')
+        ?.cantidadPorUnidad.toString(),
+    ).toBe('1');
   });
 
   it('crea una receta aproximada y editable para una actividad no referenciada', () => {
@@ -122,6 +175,7 @@ describe('construirApuAutomatico', () => {
       'Demolición de elementos de concreto',
       'm2',
       recursos,
+      100,
     );
 
     expect(resultado.metodo).toBe('aproximado');
@@ -135,7 +189,7 @@ describe('construirApuAutomatico', () => {
     expect(
       resultado.detalles.find((detalle) => detalle.recursoId === 'ayudante')
         ?.cantidadPorUnidad.toString(),
-    ).toBe('0.08');
+    ).toBe('1');
   });
 
   it('incluye transporte para actividades estimadas con desalojo', () => {
@@ -143,12 +197,27 @@ describe('construirApuAutomatico', () => {
       'Desalojo de material sobrante',
       'm3',
       recursos,
+      100,
     );
 
     expect(
       resultado.detalles.find((detalle) => detalle.recursoId === 'volqueta')
         ?.cantidadPorUnidad.toString(),
-    ).toBe('0.02');
+    ).toBe('1');
+  });
+
+  it('conserva rendimientos mayores a uno cuando la actividad los necesita', () => {
+    const resultado = construirApuAutomatico(
+      'Topografía',
+      'km',
+      recursos,
+      3710.36,
+    );
+
+    expect(
+      resultado.detalles.find((detalle) => detalle.recursoId === 'topografo')
+        ?.cantidadPorUnidad.toString(),
+    ).toBe('8');
   });
 
   it('usa la receta de relleno aunque la descripción mencione material selecto', () => {

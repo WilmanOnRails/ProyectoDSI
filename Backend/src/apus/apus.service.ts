@@ -21,6 +21,7 @@ export class ApusService {
     const { actividadId, recursoId, cantidadPorUnidad } = createApusDto;
 
     await this.verificarActividadYRecurso(actividadId, recursoId);
+    this.validarCantidadMinima(cantidadPorUnidad);
 
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -89,6 +90,10 @@ export class ApusService {
 
   async update(id: string, updateApusDto: UpdateApusDto) {
     const actual = await this.findOne(id);
+    const cantidad = updateApusDto.cantidadPorUnidad ?? actual.cantidadPorUnidad;
+    this.validarCantidadMinima(
+      new Prisma.Decimal(cantidad.toString()).toNumber(),
+    );
 
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -141,6 +146,14 @@ export class ApusService {
     if (!recurso.activo) {
       throw new BadRequestException(
         `El recurso ${recurso.codigo} está inactivo y no se puede usar en un APU`,
+      );
+    }
+  }
+
+  private validarCantidadMinima(cantidad: number) {
+    if (cantidad < 1) {
+      throw new BadRequestException(
+        'La cantidad por unidad de actividad debe ser como mínimo 1.',
       );
     }
   }

@@ -369,9 +369,10 @@ function construirDesdeLineas(
   return lineas.map((linea) => {
     const recursoEncontrado = recursos.find(
       (item) =>
-        item.tipo === linea.tipo &&
-        normalizar(item.descripcion) === normalizar(linea.descripcion) ||
-        (linea.descripcion === 'Retroexcavadora de movimiento de tierra' &&
+        (item.tipo === linea.tipo &&
+          normalizar(item.descripcion) === normalizar(linea.descripcion)) ||
+        (linea.tipo === TipoRecurso.equipo &&
+          linea.descripcion === 'Retroexcavadora de movimiento de tierra' &&
           normalizar(item.descripcion) ===
             'retroexcavadora (referencia excel)'),
     );
@@ -390,10 +391,22 @@ function construirDesdeLineas(
   });
 }
 
+function ajustarCantidadMinimaPorUnidad(
+  detalles: DetalleApuAutomatico[],
+): DetalleApuAutomatico[] {
+  return detalles.map((detalle) => ({
+    ...detalle,
+    cantidadPorUnidad: detalle.cantidadPorUnidad.lt(1)
+      ? new Prisma.Decimal(1)
+      : detalle.cantidadPorUnidad,
+  }));
+}
+
 export function construirApuAutomatico(
   nombre: string,
   unidad: string,
   recursos: RecursoApuAutomatico[],
+  _cantidadProyecto: Prisma.Decimal | number | string = 1,
 ): ResultadoApuAutomatico {
   const nombreNormalizado = normalizar(nombre);
   const referencia = recetasReferencia.find((item) =>
@@ -404,10 +417,12 @@ export function construirApuAutomatico(
     return {
       metodo: 'referencia',
       referencia: `Rendimiento tomado de ${referencia.receta.nombre} en el modelo Excel. Agregue los recursos propios del proyecto que no aparezcan en esta receta.`,
-      detalles: construirDesdeLineas(
-        referencia.receta.lineas,
-        referencia.receta.cantidadBase,
-        recursos,
+      detalles: ajustarCantidadMinimaPorUnidad(
+        construirDesdeLineas(
+          referencia.receta.lineas,
+          referencia.receta.cantidadBase,
+          recursos,
+        ),
       ),
     };
   }
@@ -452,7 +467,9 @@ export function construirApuAutomatico(
     metodo: 'aproximado',
     referencia:
       'Rendimiento aproximado por unidad. Revise las cantidades y agregue los materiales que no tengan precio en el catálogo antes de aprobar el presupuesto.',
-    detalles: construirDesdeLineas(lineas, '1', recursos),
+    detalles: ajustarCantidadMinimaPorUnidad(
+      construirDesdeLineas(lineas, '1', recursos),
+    ),
   };
 }
 
@@ -506,18 +523,10 @@ export async function sincronizarPresupuestosApu(
         item.actividadId === actividadId
           ? {
               costoUnitarioCongelado: cache.costoTotal,
-              costoMaterialesCong: cache.costoMateriales
-                .mul(item.cantidadProyecto)
-                .toDecimalPlaces(2),
-              costoManoObraCong: cache.costoManoObra
-                .mul(item.cantidadProyecto)
-                .toDecimalPlaces(2),
-              costoEquipoCong: cache.costoEquipo
-                .mul(item.cantidadProyecto)
-                .toDecimalPlaces(2),
-              costoTransporteCong: cache.costoTransporte
-                .mul(item.cantidadProyecto)
-                .toDecimalPlaces(2),
+              costoMaterialesCong: cache.costoMateriales,
+              costoManoObraCong: cache.costoManoObra,
+              costoEquipoCong: cache.costoEquipo,
+              costoTransporteCong: cache.costoTransporte,
             }
           : {
               costoUnitarioCongelado: item.costoUnitarioCongelado,
@@ -529,10 +538,17 @@ export async function sincronizarPresupuestosApu(
 
       const totales = calcularTotalesLinea({
         cantidadProyecto: item.cantidadProyecto,
+        costoUnitarioCongelado: costosActualizados.costoUnitarioCongelado,
         costoMaterialesCong: costosActualizados.costoMaterialesCong,
         costoManoObraCong: costosActualizados.costoManoObraCong,
         costoEquipoCong: costosActualizados.costoEquipoCong,
         costoTransporteCong: costosActualizados.costoTransporteCong,
+        total: item.actividadId === actividadId
+          ? costosActualizados.costoMaterialesCong
+              .add(costosActualizados.costoManoObraCong)
+              .add(costosActualizados.costoEquipoCong)
+              .add(costosActualizados.costoTransporteCong)
+          : item.total,
       });
 
       await tx.presupuestoItem.update({
@@ -575,11 +591,13 @@ export async function crearApuAutomaticoEnTransaccion(
   tx: Prisma.TransactionClient,
   actividad: { id: string; nombre: string; unidad: string },
   recursos: RecursoApuAutomatico[],
+  cantidadProyecto: Prisma.Decimal | number | string = 1,
 ) {
   const resultado = construirApuAutomatico(
     actividad.nombre,
     actividad.unidad,
     recursos,
+    cantidadProyecto,
   );
 
   await tx.apuDetalle.createMany({
