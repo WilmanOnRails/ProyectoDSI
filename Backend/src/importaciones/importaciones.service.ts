@@ -142,30 +142,29 @@ export class ImportacionesService {
             },
           });
 
+          const cantidadProyecto = actividadExtraida.cantidad;
           const apu = await crearApuAutomaticoEnTransaccion(
             tx,
             actividad,
             recursos,
+            cantidadProyecto,
           );
-          const cantidadProyecto = actividadExtraida.cantidad;
-          const costoMaterialesCong = apu.cache.costoMateriales
-            .mul(cantidadProyecto)
-            .toDecimalPlaces(2);
-          const costoManoObraCong = apu.cache.costoManoObra
-            .mul(cantidadProyecto)
-            .toDecimalPlaces(2);
-          const costoEquipoCong = apu.cache.costoEquipo
-            .mul(cantidadProyecto)
-            .toDecimalPlaces(2);
-          const costoTransporteCong = apu.cache.costoTransporte
-            .mul(cantidadProyecto)
-            .toDecimalPlaces(2);
+          const costoMaterialesCong = apu.cache.costoMateriales;
+          const costoManoObraCong = apu.cache.costoManoObra;
+          const costoEquipoCong = apu.cache.costoEquipo;
+          const costoTransporteCong = apu.cache.costoTransporte;
+          const totalCongelado = costoMaterialesCong
+            .add(costoManoObraCong)
+            .add(costoEquipoCong)
+            .add(costoTransporteCong);
           const totalesLinea = calcularTotalesLinea({
             cantidadProyecto,
+            costoUnitarioCongelado: apu.cache.costoTotal,
             costoMaterialesCong,
             costoManoObraCong,
             costoEquipoCong,
             costoTransporteCong,
+            total: totalCongelado,
           });
 
           await tx.presupuestoItem.create({
@@ -190,6 +189,8 @@ export class ImportacionesService {
             costoManoObraCong,
             costoEquipoCong,
             costoTransporteCong,
+            costoUnitarioCongelado: apu.cache.costoTotal,
+            total: totalesLinea.sumaTotal,
           });
           itemsCreados.push({
             actividadId: actividad.id,
