@@ -152,7 +152,7 @@ export class PresupuestosService {
   /**
    * Calcula el resumen con la MISMA función pura que se usa al guardar.
    * Los porcentajes se toman del módulo de Configuración y las columnas P.U.
-   * se calculan aquí como Total / Cantidad.
+   * salen de los costos unitarios congelados del APU.
    */
   private conResumenCalculado(
     presupuesto: PresupuestoConItems,
@@ -249,12 +249,22 @@ export class PresupuestosService {
 
     const cache = actividad.apuCostoCache;
     const costoUnitarioCongelado = cache.costoTotal;
+    const costoMaterialesCong = cache.costoMateriales;
+    const costoManoObraCong = cache.costoManoObra;
+    const costoEquipoCong = cache.costoEquipo;
+    const costoTransporteCong = cache.costoTransporte;
+    const totalCongelado = costoMaterialesCong
+      .add(costoManoObraCong)
+      .add(costoEquipoCong)
+      .add(costoTransporteCong);
     const totales = calcularTotalesLinea({
       cantidadProyecto,
-      costoMaterialesCong: cache.costoMateriales,
-      costoManoObraCong: cache.costoManoObra,
-      costoEquipoCong: cache.costoEquipo,
-      costoTransporteCong: cache.costoTransporte,
+      costoUnitarioCongelado,
+      costoMaterialesCong,
+      costoManoObraCong,
+      costoEquipoCong,
+      costoTransporteCong,
+      total: totalCongelado,
     });
 
     return this.prisma.$transaction(async (tx) => {
@@ -265,10 +275,10 @@ export class PresupuestosService {
         update: {
           cantidadProyecto,
           costoUnitarioCongelado,
-          costoMaterialesCong: cache.costoMateriales,
-          costoManoObraCong: cache.costoManoObra,
-          costoEquipoCong: cache.costoEquipo,
-          costoTransporteCong: cache.costoTransporte,
+          costoMaterialesCong,
+          costoManoObraCong,
+          costoEquipoCong,
+          costoTransporteCong,
           total: totales.sumaTotal,
         },
         create: {
@@ -276,10 +286,10 @@ export class PresupuestosService {
           actividadId,
           cantidadProyecto,
           costoUnitarioCongelado,
-          costoMaterialesCong: cache.costoMateriales,
-          costoManoObraCong: cache.costoManoObra,
-          costoEquipoCong: cache.costoEquipo,
-          costoTransporteCong: cache.costoTransporte,
+          costoMaterialesCong,
+          costoManoObraCong,
+          costoEquipoCong,
+          costoTransporteCong,
           total: totales.sumaTotal,
         },
       });
@@ -427,8 +437,7 @@ export class PresupuestosService {
         const cant = Number(item.cantidadProyecto);
         const linea = calcularTotalesLinea(item);
 
-        // Usamos las P.U. que ya calculó el backend (Total / Cantidad),
-        // para que el Excel coincida exactamente con la pantalla.
+        // Usamos las P.U. calculadas por la misma función que alimenta la pantalla.
         const puMat = Number(item.puMateriales ?? 0);
         const puMo = Number(item.puManoObra ?? 0);
         const puEq = Number(item.puEquipo ?? 0);
@@ -497,10 +506,11 @@ export class PresupuestosService {
     sheet.addRow(['Impuestos', Number(presupuesto.impuestos)]);
     sheet.addRow(['PRECIO TOTAL', Number(presupuesto.total)]);
 
-    sheet.getColumn(5).numFmt = '#,##0.00';
+    sheet.getColumn(5).numFmt = '#,##0.###';
     for (let c = 6; c <= headers.length; c++) {
-      sheet.getColumn(c).numFmt = '#,##0.00';
+      sheet.getColumn(c).numFmt = '#,##0.###';
     }
+    sheet.getColumn(2).numFmt = '#,##0.###';
 
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
@@ -529,22 +539,32 @@ export class PresupuestosService {
         const cache = item.actividad.apuCostoCache;
         if (cache) {
           const costoUnitarioCongelado = cache.costoTotal;
+          const costoMaterialesCong = cache.costoMateriales;
+          const costoManoObraCong = cache.costoManoObra;
+          const costoEquipoCong = cache.costoEquipo;
+          const costoTransporteCong = cache.costoTransporte;
+          const totalCongelado = costoMaterialesCong
+            .add(costoManoObraCong)
+            .add(costoEquipoCong)
+            .add(costoTransporteCong);
           const totales = calcularTotalesLinea({
             cantidadProyecto: item.cantidadProyecto,
-            costoMaterialesCong: cache.costoMateriales,
-            costoManoObraCong: cache.costoManoObra,
-            costoEquipoCong: cache.costoEquipo,
-            costoTransporteCong: cache.costoTransporte,
+            costoUnitarioCongelado,
+            costoMaterialesCong,
+            costoManoObraCong,
+            costoEquipoCong,
+            costoTransporteCong,
+            total: totalCongelado,
           });
 
           await tx.presupuestoItem.update({
             where: { id: item.id },
             data: {
               costoUnitarioCongelado,
-              costoMaterialesCong: cache.costoMateriales,
-              costoManoObraCong: cache.costoManoObra,
-              costoEquipoCong: cache.costoEquipo,
-              costoTransporteCong: cache.costoTransporte,
+              costoMaterialesCong,
+              costoManoObraCong,
+              costoEquipoCong,
+              costoTransporteCong,
               total: totales.sumaTotal,
             },
           });
