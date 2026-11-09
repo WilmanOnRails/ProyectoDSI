@@ -89,7 +89,16 @@ export class ActivitiesService implements OnModuleInit {
         const pendientes = await tx.actividad.findMany({
           where: { apuDetalles: { none: {} } },
           orderBy: { codigo: 'asc' },
-          select: { id: true, nombre: true, unidad: true },
+          select: {
+            id: true,
+            nombre: true,
+            unidad: true,
+            presupuestoItems: {
+              orderBy: { orden: 'asc' },
+              take: 1,
+              select: { cantidadProyecto: true },
+            },
+          },
         });
         if (pendientes.length === 0) return;
 
@@ -107,6 +116,7 @@ export class ActivitiesService implements OnModuleInit {
             tx,
             actividad,
             recursos,
+            actividad.presupuestoItems[0]?.cantidadProyecto ?? 1,
           );
           await sincronizarPresupuestosApu(
             tx,
