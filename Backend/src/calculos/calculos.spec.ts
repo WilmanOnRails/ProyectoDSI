@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   calcularApu,
   calcularResumenPresupuesto,
+  calcularTotalesLinea,
   calcularTotalesPresupuesto,
   type DetalleApu,
 } from './calculos.js';
@@ -219,17 +220,21 @@ describe('calcularResumenPresupuesto', () => {
     const items = [
       {
         cantidadProyecto: 10,
-        costoMaterialesCong: 100,
-        costoManoObraCong: 50,
-        costoEquipoCong: 20,
-        costoTransporteCong: 10,
+        costoUnitarioCongelado: 180,
+        costoMaterialesCong: 10000,
+        costoManoObraCong: 5000,
+        costoEquipoCong: 2000,
+        costoTransporteCong: 1000,
+        total: 18000,
       },
       {
         cantidadProyecto: 2,
-        costoMaterialesCong: 50,
-        costoManoObraCong: 25,
-        costoEquipoCong: 10,
-        costoTransporteCong: 5,
+        costoUnitarioCongelado: 90,
+        costoMaterialesCong: 200,
+        costoManoObraCong: 100,
+        costoEquipoCong: 40,
+        costoTransporteCong: 20,
+        total: 360,
       },
     ];
 
@@ -241,12 +246,64 @@ describe('calcularResumenPresupuesto', () => {
       pctImpuestos: 15,
     });
 
-    // Línea 1: mat=1000, mo=500, eq=200, tr=100, suma=1800
-    // Línea 2: mat=100,  mo=50,  eq=20,  tr=10,  suma=180
-    expect(resumen.costoMateriales.toString()).toBe('1100');
-    expect(resumen.costoManoObra.toString()).toBe('550');
-    expect(resumen.costoEquipo.toString()).toBe('220');
-    expect(resumen.costoTransporte.toString()).toBe('110');
-    expect(resumen.costosDirectos.toString()).toBe('1980');
+    expect(resumen.costoMateriales.toString()).toBe('10200');
+    expect(resumen.costoManoObra.toString()).toBe('5100');
+    expect(resumen.costoEquipo.toString()).toBe('2040');
+    expect(resumen.costoTransporte.toString()).toBe('1020');
+    expect(resumen.costosDirectos.toString()).toBe('18360');
+  });
+
+  it('divide el subtotal APU entre la cantidad y reconstruye el total', () => {
+    const linea = calcularTotalesLinea({
+      cantidadProyecto: '3710.36',
+      costoUnitarioCongelado: '0.16',
+      costoMaterialesCong: '519.45',
+      costoManoObraCong: '74.21',
+      costoEquipoCong: '0',
+      costoTransporteCong: '0',
+      total: '593.66',
+    });
+
+    expect(linea.puMateriales.toString()).toBe('0.14');
+    expect(linea.puManoObra.toString()).toBe('0.020001');
+    expect(linea.totalMateriales.toString()).toBe('519.45');
+    expect(linea.totalManoObra.toString()).toBe('74.21');
+    expect(linea.sumaTotal.toString()).toBe('593.66');
+  });
+
+  it('divide el subtotal APU entre la cantidad total del proyecto', () => {
+    const linea = calcularTotalesLinea({
+      cantidadProyecto: '3710.36',
+      costoUnitarioCongelado: '1.35',
+      costoMaterialesCong: '0',
+      costoManoObraCong: '0.90',
+      costoEquipoCong: '0.45',
+      costoTransporteCong: '0',
+      total: '1.35',
+    });
+
+    expect(linea.puManoObra.toString()).toBe('0.000243');
+    expect(linea.puEquipo.toString()).toBe('0.000121');
+    expect(linea.totalManoObra.toString()).toBe('0.9');
+    expect(linea.totalEquipo.toString()).toBe('0.45');
+    expect(linea.sumaTotal.toString()).toBe('1.35');
+  });
+
+  it('convierte subtotales guardados por versiones anteriores en sus P.U. originales', () => {
+    const linea = calcularTotalesLinea({
+      cantidadProyecto: '3710.36',
+      costoUnitarioCongelado: '0.16',
+      costoMaterialesCong: '0.14',
+      costoManoObraCong: '0.02',
+      costoEquipoCong: '0',
+      costoTransporteCong: '0',
+      total: '593.66',
+    });
+
+    expect(linea.puMateriales.toString()).toBe('0.14');
+    expect(linea.puManoObra.toString()).toBe('0.02');
+    expect(linea.totalMateriales.toString()).toBe('519.45');
+    expect(linea.totalManoObra.toString()).toBe('74.21');
+    expect(linea.sumaTotal.toString()).toBe('593.66');
   });
 });

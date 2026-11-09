@@ -531,6 +531,10 @@ h1 {
   padding-bottom: 20px;
 }
 
+.apu-detail-panel {
+  scroll-margin-top: 20px;
+}
+
 .secondary-button {
   border: 1px solid #dbe3ef;
   border-radius: 8px;
@@ -683,6 +687,33 @@ h1 {
 .table-wrapper {
   width: 100%;
   overflow-x: auto;
+}
+
+.floating-horizontal-scroll {
+  position: fixed;
+  bottom: 0;
+  z-index: 20;
+  height: 18px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px 4px 0 0;
+  scrollbar-width: auto;
+  scrollbar-color: #64748b #e2e8f0;
+}
+
+.floating-horizontal-scroll::-webkit-scrollbar {
+  height: 14px;
+}
+
+.floating-horizontal-scroll::-webkit-scrollbar-track {
+  background: #e2e8f0;
+}
+
+.floating-horizontal-scroll::-webkit-scrollbar-thumb {
+  background: #64748b;
+  border-radius: 7px;
 }
 
 table {

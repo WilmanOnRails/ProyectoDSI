@@ -1,7 +1,7 @@
 import axios from "axios";
 import { clearAuthSession, getAuthToken } from "./authSession";
 
-const apiBaseUrl = (import.meta.env.VITE_API_URL || "http://localhost:3000")
+const apiBaseUrl = (import.meta.env.VITE_API_URL || "http://localhost:3000/api")
     .replace(/\/+$/, "")
     .replace(/\/api(?:\/v1)?$/, "");
 

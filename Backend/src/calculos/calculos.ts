@@ -44,13 +44,22 @@ export interface ResultadoPresupuesto {
 /** Datos mínimos de una línea de presupuesto para calcular sus totales. */
 export interface ItemPresupuestoCalculo {
   cantidadProyecto: Decimal | number | string;
+  /** Importe congelado que se divide entre la cantidad del proyecto para obtener el P.U. */
   costoMaterialesCong: Decimal | number | string;
   costoManoObraCong: Decimal | number | string;
   costoEquipoCong: Decimal | number | string;
   costoTransporteCong: Decimal | number | string;
+  /** Permite identificar líneas guardadas previamente como costos unitarios. */
+  costoUnitarioCongelado?: Decimal | number | string;
+  total?: Decimal | number | string;
 }
 
 export interface TotalesLineaPresupuesto {
+  puMateriales: Decimal;
+  puManoObra: Decimal;
+  puEquipo: Decimal;
+  puTransporte: Decimal;
+  puTotal: Decimal;
   totalMateriales: Decimal;
   totalManoObra: Decimal;
   totalEquipo: Decimal;
@@ -212,22 +221,63 @@ export function calcularTotalesPresupuesto(
 /**
  * Calcula los totales de UNA línea del desglose.
  *
- * Cada categoría se multiplica por la cantidad del proyecto y se redondea a
- * 2 decimales. La "Suma Total" es la suma de esas cuatro categorías ya
- * redondeadas, para que capítulos y costo directo cuadren exactamente con lo
- * que se muestra en pantalla.
+ * El P.U. de cada categoría es el importe APU congelado dividido entre la
+ * cantidad del proyecto; cada total es ese P.U. multiplicado por la cantidad.
  */
 export function calcularTotalesLinea(
   item: ItemPresupuestoCalculo,
 ): TotalesLineaPresupuesto {
-  const cant = d(item.cantidadProyecto);
-
-  const totalMateriales = redondear(d(item.costoMaterialesCong).mul(cant));
-  const totalManoObra = redondear(d(item.costoManoObraCong).mul(cant));
-  const totalEquipo = redondear(d(item.costoEquipoCong).mul(cant));
-  const totalTransporte = redondear(d(item.costoTransporteCong).mul(cant));
+  const cantidad = d(item.cantidadProyecto);
+  const costosCongelados = [
+    d(item.costoMaterialesCong),
+    d(item.costoManoObraCong),
+    d(item.costoEquipoCong),
+    d(item.costoTransporteCong),
+  ];
+  const sumaCongelada = costosCongelados.reduce(
+    (suma, costo) => suma.add(costo),
+    new Decimal(0),
+  );
+  const precioUnitarioCongelado =
+    item.costoUnitarioCongelado !== undefined
+      ? d(item.costoUnitarioCongelado)
+      : null;
+  const camposGuardadosComoUnitarios =
+    precioUnitarioCongelado !== null &&
+    cantidad.gt(0) &&
+    redondear(sumaCongelada)
+      .minus(precioUnitarioCongelado)
+      .abs()
+      .lte('0.01') &&
+    item.total !== undefined &&
+    redondear(d(item.total).minus(sumaCongelada.mul(cantidad)))
+      .abs()
+      .lte('0.01');
+  const unitario = (costo: Decimal) => {
+    if (!cantidad.gt(0)) return new Decimal(0);
+    const importeProyecto = camposGuardadosComoUnitarios
+      ? costo.mul(cantidad)
+      : costo;
+    return importeProyecto.div(cantidad).toDecimalPlaces(6);
+  };
+  const puMateriales = unitario(costosCongelados[0]);
+  const puManoObra = unitario(costosCongelados[1]);
+  const puEquipo = unitario(costosCongelados[2]);
+  const puTransporte = unitario(costosCongelados[3]);
+  const totalMateriales = redondear(puMateriales.mul(cantidad));
+  const totalManoObra = redondear(puManoObra.mul(cantidad));
+  const totalEquipo = redondear(puEquipo.mul(cantidad));
+  const totalTransporte = redondear(puTransporte.mul(cantidad));
 
   return {
+    puMateriales,
+    puManoObra,
+    puEquipo,
+    puTransporte,
+    puTotal: puMateriales
+      .add(puManoObra)
+      .add(puEquipo)
+      .add(puTransporte),
     totalMateriales,
     totalManoObra,
     totalEquipo,

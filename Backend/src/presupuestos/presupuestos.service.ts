@@ -5,7 +5,10 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
-import { calcularResumenPresupuesto, calcularTotalesLinea } from '../calculos/calculos.js';
+import {
+  calcularResumenPresupuesto,
+  calcularTotalesLinea,
+} from '../calculos/calculos.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AgregarItemDto } from './dto/agregar-item.dto.js';
 import { CreatePresupuestoDto } from './dto/create-presupuesto.dto.js';
@@ -149,7 +152,7 @@ export class PresupuestosService {
   /**
    * Calcula el resumen con la MISMA función pura que se usa al guardar.
    * Los porcentajes se toman del módulo de Configuración y las columnas P.U.
-   * se calculan aquí como Total / Cantidad.
+   * salen de los costos unitarios congelados del APU.
    */
   private conResumenCalculado(
     presupuesto: PresupuestoConItems,
@@ -157,16 +160,6 @@ export class PresupuestosService {
   ) {
     const items = presupuesto.items.map((item) => {
       const linea = calcularTotalesLinea(item);
-      const cant = item.cantidadProyecto;
-      const dividir = (valorApu: Prisma.Decimal) =>
-        cant.gt(0) ? valorApu.div(cant).toDecimalPlaces(2) : new Prisma.Decimal(0);
-
-      // P.U. = costo del APU / cantidad del proyecto.
-      // Ejemplo: 522.57 / 3,710.36 = 0.14.
-      const puMateriales = dividir(item.costoMaterialesCong);
-      const puManoObra = dividir(item.costoManoObraCong);
-      const puEquipo = dividir(item.costoEquipoCong);
-      const puTransporte = dividir(item.costoTransporteCong);
 
       return {
         ...item,
@@ -175,15 +168,11 @@ export class PresupuestosService {
         totalEquipo: linea.totalEquipo,
         totalTransporte: linea.totalTransporte,
         sumaTotal: linea.sumaTotal,
-        puMateriales,
-        puManoObra,
-        puEquipo,
-        puTransporte,
-        // P.U. Total = suma de las cuatro P.U. ya redondeadas.
-        puTotal: puMateriales
-          .add(puManoObra)
-          .add(puEquipo)
-          .add(puTransporte),
+        puMateriales: linea.puMateriales,
+        puManoObra: linea.puManoObra,
+        puEquipo: linea.puEquipo,
+        puTransporte: linea.puTransporte,
+        puTotal: linea.puTotal,
       };
     });
 
@@ -260,7 +249,23 @@ export class PresupuestosService {
 
     const cache = actividad.apuCostoCache;
     const costoUnitarioCongelado = cache.costoTotal;
-    const totalItem = costoUnitarioCongelado.mul(cantidadProyecto);
+    const costoMaterialesCong = cache.costoMateriales;
+    const costoManoObraCong = cache.costoManoObra;
+    const costoEquipoCong = cache.costoEquipo;
+    const costoTransporteCong = cache.costoTransporte;
+    const totalCongelado = costoMaterialesCong
+      .add(costoManoObraCong)
+      .add(costoEquipoCong)
+      .add(costoTransporteCong);
+    const totales = calcularTotalesLinea({
+      cantidadProyecto,
+      costoUnitarioCongelado,
+      costoMaterialesCong,
+      costoManoObraCong,
+      costoEquipoCong,
+      costoTransporteCong,
+      total: totalCongelado,
+    });
 
     return this.prisma.$transaction(async (tx) => {
       await tx.presupuestoItem.upsert({
@@ -270,22 +275,22 @@ export class PresupuestosService {
         update: {
           cantidadProyecto,
           costoUnitarioCongelado,
-          costoMaterialesCong: cache.costoMateriales,
-          costoManoObraCong: cache.costoManoObra,
-          costoEquipoCong: cache.costoEquipo,
-          costoTransporteCong: cache.costoTransporte,
-          total: totalItem,
+          costoMaterialesCong,
+          costoManoObraCong,
+          costoEquipoCong,
+          costoTransporteCong,
+          total: totales.sumaTotal,
         },
         create: {
           presupuestoId,
           actividadId,
           cantidadProyecto,
           costoUnitarioCongelado,
-          costoMaterialesCong: cache.costoMateriales,
-          costoManoObraCong: cache.costoManoObra,
-          costoEquipoCong: cache.costoEquipo,
-          costoTransporteCong: cache.costoTransporte,
-          total: totalItem,
+          costoMaterialesCong,
+          costoManoObraCong,
+          costoEquipoCong,
+          costoTransporteCong,
+          total: totales.sumaTotal,
         },
       });
 
@@ -422,35 +427,34 @@ export class PresupuestosService {
       capRow.font = { bold: true };
       sheet.mergeCells(capRow.number, 1, capRow.number, headers.length);
 
-      let capMat = 0;
-      let capMo = 0;
-      let capEq = 0;
-      let capTr = 0;
-      let capTotal = 0;
+      let capMat = new Prisma.Decimal(0);
+      let capMo = new Prisma.Decimal(0);
+      let capEq = new Prisma.Decimal(0);
+      let capTr = new Prisma.Decimal(0);
+      let capTotal = new Prisma.Decimal(0);
 
       for (const item of items) {
         const cant = Number(item.cantidadProyecto);
         const linea = calcularTotalesLinea(item);
 
-        // Usamos las P.U. que ya calculó el backend (Total / Cantidad),
-        // para que el Excel coincida exactamente con la pantalla.
+        // Usamos las P.U. calculadas por la misma función que alimenta la pantalla.
         const puMat = Number(item.puMateriales ?? 0);
         const puMo = Number(item.puManoObra ?? 0);
         const puEq = Number(item.puEquipo ?? 0);
         const puTr = Number(item.puTransporte ?? 0);
         const puTotal = Number(item.puTotal ?? puMat + puMo + puEq + puTr);
 
-        const totalMat = Number(item.totalMateriales ?? linea.totalMateriales);
-        const totalMo = Number(item.totalManoObra ?? linea.totalManoObra);
-        const totalEq = Number(item.totalEquipo ?? linea.totalEquipo);
-        const totalTr = Number(item.totalTransporte ?? linea.totalTransporte);
-        const sumaTotal = Number(item.sumaTotal ?? linea.sumaTotal);
+        const totalMat = item.totalMateriales ?? linea.totalMateriales;
+        const totalMo = item.totalManoObra ?? linea.totalManoObra;
+        const totalEq = item.totalEquipo ?? linea.totalEquipo;
+        const totalTr = item.totalTransporte ?? linea.totalTransporte;
+        const sumaTotal = item.sumaTotal ?? linea.sumaTotal;
 
-        capMat += totalMat;
-        capMo += totalMo;
-        capEq += totalEq;
-        capTr += totalTr;
-        capTotal += sumaTotal;
+        capMat = capMat.add(totalMat);
+        capMo = capMo.add(totalMo);
+        capEq = capEq.add(totalEq);
+        capTr = capTr.add(totalTr);
+        capTotal = capTotal.add(sumaTotal);
 
         sheet.addRow([
           item.actividad.codigo,
@@ -463,11 +467,11 @@ export class PresupuestosService {
           puEq,
           puTr,
           puTotal,
-          totalMat,
-          totalMo,
-          totalEq,
-          totalTr,
-          sumaTotal,
+          totalMat.toNumber(),
+          totalMo.toNumber(),
+          totalEq.toNumber(),
+          totalTr.toNumber(),
+          sumaTotal.toNumber(),
         ]);
       }
 
@@ -482,11 +486,11 @@ export class PresupuestosService {
         '',
         '',
         '',
-        capMat,
-        capMo,
-        capEq,
-        capTr,
-        capTotal,
+        capMat.toNumber(),
+        capMo.toNumber(),
+        capEq.toNumber(),
+        capTr.toNumber(),
+        capTotal.toNumber(),
       ]);
       subRow.font = { bold: true };
     }
@@ -502,10 +506,11 @@ export class PresupuestosService {
     sheet.addRow(['Impuestos', Number(presupuesto.impuestos)]);
     sheet.addRow(['PRECIO TOTAL', Number(presupuesto.total)]);
 
-    sheet.getColumn(5).numFmt = '#,##0.00';
+    sheet.getColumn(5).numFmt = '#,##0.###';
     for (let c = 6; c <= headers.length; c++) {
-      sheet.getColumn(c).numFmt = '#,##0.00';
+      sheet.getColumn(c).numFmt = '#,##0.###';
     }
+    sheet.getColumn(2).numFmt = '#,##0.###';
 
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
@@ -534,17 +539,33 @@ export class PresupuestosService {
         const cache = item.actividad.apuCostoCache;
         if (cache) {
           const costoUnitarioCongelado = cache.costoTotal;
-          const totalItem = costoUnitarioCongelado.mul(item.cantidadProyecto);
+          const costoMaterialesCong = cache.costoMateriales;
+          const costoManoObraCong = cache.costoManoObra;
+          const costoEquipoCong = cache.costoEquipo;
+          const costoTransporteCong = cache.costoTransporte;
+          const totalCongelado = costoMaterialesCong
+            .add(costoManoObraCong)
+            .add(costoEquipoCong)
+            .add(costoTransporteCong);
+          const totales = calcularTotalesLinea({
+            cantidadProyecto: item.cantidadProyecto,
+            costoUnitarioCongelado,
+            costoMaterialesCong,
+            costoManoObraCong,
+            costoEquipoCong,
+            costoTransporteCong,
+            total: totalCongelado,
+          });
 
           await tx.presupuestoItem.update({
             where: { id: item.id },
             data: {
               costoUnitarioCongelado,
-              costoMaterialesCong: cache.costoMateriales,
-              costoManoObraCong: cache.costoManoObra,
-              costoEquipoCong: cache.costoEquipo,
-              costoTransporteCong: cache.costoTransporte,
-              total: totalItem,
+              costoMaterialesCong,
+              costoManoObraCong,
+              costoEquipoCong,
+              costoTransporteCong,
+              total: totales.sumaTotal,
             },
           });
         }

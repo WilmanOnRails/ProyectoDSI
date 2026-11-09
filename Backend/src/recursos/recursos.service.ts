@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
@@ -19,13 +20,18 @@ import { UpdateRecursoDto } from './dto/update-recurso.dto.js';
 
 @Injectable()
 export class RecursosService implements OnModuleInit {
+  private readonly logger = new Logger(RecursosService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async onModuleInit() {
     try {
       await this.seedDefaults();
-    } catch {
-      // Silenciar si la BD aún no está disponible en arranque
+    } catch (error) {
+      this.logger.error(
+        'No se pudieron cargar los recursos predeterminados',
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 
@@ -434,26 +440,373 @@ export class RecursosService implements OnModuleInit {
   }
 
   async seedDefaults() {
-    const predeterminados = [
-      { codigo: 'MO-0001', tipo: TipoRecurso.mano_obra, descripcion: 'Oficial albañil', unidad: 'Hra', costoUnitario: 120.00, categoria: 'Mano de Obra' },
-      { codigo: 'MO-0002', tipo: TipoRecurso.mano_obra, descripcion: 'Ayudante / Peón', unidad: 'Hra', costoUnitario: 80.00, categoria: 'Mano de Obra' },
-      { codigo: 'MO-0003', tipo: TipoRecurso.mano_obra, descripcion: 'Capataz de obra', unidad: 'Hra', costoUnitario: 160.00, categoria: 'Mano de Obra' },
-      { codigo: 'MO-0004', tipo: TipoRecurso.mano_obra, descripcion: 'Operador de maquinaria', unidad: 'Hra', costoUnitario: 150.00, categoria: 'Mano de Obra' },
-      { codigo: 'EQ-0001', tipo: TipoRecurso.equipo, descripcion: 'Retroexcavadora', unidad: 'Hra', costoUnitario: 1200.00, categoria: 'Equipos y Maquinaria' },
-      { codigo: 'EQ-0002', tipo: TipoRecurso.equipo, descripcion: 'Compactador vibratorio (Plancha)', unidad: 'Hra', costoUnitario: 800.00, categoria: 'Equipos y Maquinaria' },
-      { codigo: 'EQ-0003', tipo: TipoRecurso.equipo, descripcion: 'Mezcladora de concreto 1 saco', unidad: 'Hra', costoUnitario: 450.00, categoria: 'Equipos y Maquinaria' },
-      { codigo: 'TRA-0001', tipo: TipoRecurso.transporte, descripcion: 'Camión de volteo (Volqueta)', unidad: 'Viaje', costoUnitario: 1500.00, categoria: 'Transporte y Acarreo' },
-      { codigo: 'TRA-0002', tipo: TipoRecurso.transporte, descripcion: 'Acarreo de material selecto', unidad: 'm3', costoUnitario: 250.00, categoria: 'Transporte y Acarreo' },
+    const predeterminados: Array<{
+      tipo: TipoRecurso;
+      descripcion: string;
+      unidad: string;
+      costoUnitario: number;
+      categoria: string;
+      fuente: string;
+    }> = [
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Oficial albañil',
+        unidad: 'Hra',
+        costoUnitario: 120,
+        categoria: 'Mano de Obra',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Ayudante / Peón',
+        unidad: 'Hra',
+        costoUnitario: 80,
+        categoria: 'Mano de Obra',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Capataz de obra',
+        unidad: 'Hra',
+        costoUnitario: 160,
+        categoria: 'Mano de Obra',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Operador de maquinaria',
+        unidad: 'Hra',
+        costoUnitario: 150,
+        categoria: 'Mano de Obra',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Retroexcavadora',
+        unidad: 'Hra',
+        costoUnitario: 1200,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Compactador vibratorio (Plancha)',
+        unidad: 'Hra',
+        costoUnitario: 800,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Mezcladora de concreto 1 saco',
+        unidad: 'Hra',
+        costoUnitario: 450,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.transporte,
+        descripcion: 'Camión de volteo (Volqueta)',
+        unidad: 'Viaje',
+        costoUnitario: 1500,
+        categoria: 'Transporte y Acarreo',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.transporte,
+        descripcion: 'Acarreo de material selecto',
+        unidad: 'm3',
+        costoUnitario: 250,
+        categoria: 'Transporte y Acarreo',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Ayudante de obra',
+        unidad: 'Hra',
+        costoUnitario: 62.5,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Topógrafo',
+        unidad: 'Hra',
+        costoUnitario: 100,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Dibujante técnico',
+        unidad: 'Hra',
+        costoUnitario: 2197.46,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Operador de camión cisterna',
+        unidad: 'Hra',
+        costoUnitario: 62.5,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Operador de motoniveladora',
+        unidad: 'Hra',
+        costoUnitario: 62.5,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Operador de compactador',
+        unidad: 'Hra',
+        costoUnitario: 62.5,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Operador de retroexcavadora',
+        unidad: 'Hra',
+        costoUnitario: 62.5,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Operador de camión volquete',
+        unidad: 'Hra',
+        costoUnitario: 62.5,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Camión de 2 toneladas',
+        unidad: 'Hra',
+        costoUnitario: 200,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Herramientas menores',
+        unidad: 'Hra',
+        costoUnitario: 80,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Estación total',
+        unidad: 'Hra',
+        costoUnitario: 2563.7,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Equipo de topografía',
+        unidad: 'Hra',
+        costoUnitario: 2395.5,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Tractor D-6',
+        unidad: 'Hra',
+        costoUnitario: 2929.94,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Retroexcavadora de movimiento de tierra',
+        unidad: 'Hra',
+        costoUnitario: 1464.97,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Volquete para desalojo',
+        unidad: 'Hra',
+        costoUnitario: 1729.38,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Camión cisterna',
+        unidad: 'Hra',
+        costoUnitario: 572.26,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Motoniveladora',
+        unidad: 'Hra',
+        costoUnitario: 2746.82,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Compactador',
+        unidad: 'Hra',
+        costoUnitario: 2014.34,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Camión volquete para material selecto',
+        unidad: 'Hra',
+        costoUnitario: 2400.77,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.transporte,
+        descripcion: 'Traslado Lowboy - Tractor D-6',
+        unidad: 'Viaje',
+        costoUnitario: 25637.01,
+        categoria: 'Transporte y Acarreo',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.transporte,
+        descripcion: 'Traslado Lowboy - Retroexcavadora',
+        unidad: 'Viaje',
+        costoUnitario: 25637.01,
+        categoria: 'Transporte y Acarreo',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.transporte,
+        descripcion: 'Traslado Lowboy - Compactador',
+        unidad: 'Viaje',
+        costoUnitario: 25637.01,
+        categoria: 'Transporte y Acarreo',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.transporte,
+        descripcion: 'Traslado Lowboy - Motoniveladora',
+        unidad: 'Viaje',
+        costoUnitario: 25634,
+        categoria: 'Transporte y Acarreo',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.material,
+        descripcion: 'Agua',
+        unidad: 'galón',
+        costoUnitario: 0.9,
+        categoria: 'Materiales de Construcción',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.material,
+        descripcion: 'Madera de pino',
+        unidad: 'Vrs/pulg2',
+        costoUnitario: 15,
+        categoria: 'Materiales de Construcción',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.material,
+        descripcion: 'Material selecto',
+        unidad: 'm3',
+        costoUnitario: 160,
+        categoria: 'Materiales de Construcción',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
     ];
 
+    let creados = 0;
     for (const r of predeterminados) {
-      await this.prisma.recurso.upsert({
-        where: { codigo: r.codigo },
-        update: { costoUnitario: r.costoUnitario, descripcion: r.descripcion, categoria: r.categoria },
-        create: r,
-      });
+      if (await this.insertarPredeterminado(r)) creados++;
     }
 
-    return { mensaje: 'Recursos predeterminados (Mano de Obra, Equipos y Transporte) insertados correctamente.' };
+    return {
+      mensaje:
+        'Recursos predeterminados de mano de obra, equipos, transporte y materiales verificados.',
+      creados,
+    };
+  }
+
+  private async insertarPredeterminado(recurso: {
+    tipo: TipoRecurso;
+    descripcion: string;
+    unidad: string;
+    costoUnitario: number;
+    categoria: string;
+    fuente: string;
+  }): Promise<boolean> {
+    for (let intento = 0; intento < 3; intento++) {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const existentes = await tx.recurso.findMany({
+            where: {
+              tipo: recurso.tipo,
+            },
+            select: { id: true, descripcion: true },
+          });
+          const clave = (descripcion: string) =>
+            descripcion.toLocaleLowerCase().normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '');
+          const aliases: Record<string, string[]> = {
+            'Retroexcavadora de movimiento de tierra': [
+              'Retroexcavadora (referencia Excel)',
+            ],
+          };
+          const nombresAnteriores = [
+            `${recurso.descripcion} (referencia Excel)`,
+            ...(aliases[recurso.descripcion] ?? []),
+          ].map(clave);
+          const existente = existentes.find(
+            (item) =>
+              clave(item.descripcion) === clave(recurso.descripcion) ||
+              nombresAnteriores.includes(clave(item.descripcion)),
+          );
+          if (existente) {
+            if (existente.descripcion !== recurso.descripcion) {
+              await tx.recurso.update({
+                where: { id: existente.id },
+                data: { descripcion: recurso.descripcion },
+              });
+            }
+            return false;
+          }
+
+          const creado = await tx.recurso.create({
+            data: {
+              ...recurso,
+              codigo: await this.generarCodigo(tx, recurso.tipo),
+            },
+          });
+          await tx.historialPrecio.create({
+            data: {
+              recursoId: creado.id,
+              precio: recurso.costoUnitario,
+              fuente: recurso.fuente,
+            },
+          });
+          return true;
+        });
+      } catch (error) {
+        if (this.esConflictoCodigo(error) && intento < 2) continue;
+        throw this.traducirErrorPrisma(error);
+      }
+    }
+
+    return false;
   }
 }
