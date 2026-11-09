@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { Download, FileSpreadsheet } from "lucide-react";
 import api from "../services/api";
+import HorizontalTable from "../components/HorizontalTable";
 
 type Item = {
   id: string;
@@ -49,6 +50,19 @@ type Budget = {
 
 const money = (v: string | number) =>
   `C$ ${Number(v || 0).toLocaleString("es-NI", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const unitMoney = (v: string | number) => {
+  const amount = Number(v || 0);
+  const value =
+    amount !== 0 && Math.abs(amount) < 0.001
+      ? `<${(0.001).toLocaleString("es-NI", {
+          minimumFractionDigits: 3,
+          maximumFractionDigits: 3,
+        })}`
+      : amount.toLocaleString("es-NI", { maximumFractionDigits: 3 });
+  return `C$ ${value}`;
+};
+const quantityFormat = (v: number) =>
+  v.toLocaleString("es-NI", { maximumFractionDigits: 3 });
 
 const toCents = (value: string | number) => Math.round(Number(value || 0) * 100);
 const fromCents = (value: number) => value / 100;
@@ -68,7 +82,7 @@ const lineTotal = (
       : quantity > 0
         ? fromCents(toCents(frozenCost) / quantity)
         : 0;
-  return fromCents(toCents(unitPrice) * Math.round(quantity * 100) / 100);
+  return fromCents(Math.round(toCents(unitPrice) * quantity));
 };
 const totalMatItem = (item: Item) =>
   lineTotal(item, item.totalMateriales, item.puMateriales, item.costoMaterialesCong);
@@ -171,7 +185,7 @@ export default function Budgets() {
           </div>
           <FileSpreadsheet size={28} />
         </div>
-        <div className="table-wrapper">
+        <HorizontalTable>
           <table>
             <thead>
               <tr>
@@ -203,7 +217,7 @@ export default function Budgets() {
               )}
             </tbody>
           </table>
-        </div>
+        </HorizontalTable>
       </section>
 
       {selected && (
@@ -229,7 +243,7 @@ export default function Budgets() {
 
           {error && <div className="import-error">{error}</div>}
 
-          <div className="table-wrapper" style={{ marginTop: "14px", overflowX: "auto" }}>
+          <HorizontalTable style={{ marginTop: "14px", overflowX: "auto" }}>
             <table style={{ minWidth: "1400px", fontSize: "12px" }}>
               <thead>
                 <tr>
@@ -307,12 +321,12 @@ export default function Budgets() {
                           <td className="code-cell">{x.actividad.codigo || String(i + 1)}</td>
                           <td className="truncate-cell" title={x.actividad.nombre}>{x.actividad.nombre}</td>
                           <td>{x.actividad.unidad}</td>
-                          <td>{cant}</td>
-                          <td>{money(puMat)}</td>
-                          <td>{money(puMo)}</td>
-                          <td>{money(puEq)}</td>
-                          <td>{money(puTr)}</td>
-                          <td><strong>{money(puTot)}</strong></td>
+                          <td>{quantityFormat(cant)}</td>
+                          <td>{unitMoney(puMat)}</td>
+                          <td>{unitMoney(puMo)}</td>
+                          <td>{unitMoney(puEq)}</td>
+                          <td>{unitMoney(puTr)}</td>
+                          <td><strong>{unitMoney(puTot)}</strong></td>
                           <td>{money(totalMatDisplay)}</td>
                           <td>{money(totMo)}</td>
                           <td>{money(totEq)}</td>
@@ -340,7 +354,7 @@ export default function Budgets() {
                 )}
               </tbody>
             </table>
-          </div>
+          </HorizontalTable>
 
           <div className="financial-summary">
             <p>Costo directo: <strong>{money(selected.costosDirectos)}</strong></p>

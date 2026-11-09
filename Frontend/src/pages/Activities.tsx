@@ -1,6 +1,7 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { Plus, Trash2, Search, Filter, FolderKanban } from "lucide-react";
 import api from "../services/api";
+import HorizontalTable from "../components/HorizontalTable";
 
 type Activity = {
   id: string;
@@ -61,6 +62,8 @@ export default function Activities() {
   const [tipoSeccion, setTipoSeccion] = useState<"material" | "mano_obra" | "equipo_transporte">("material");
   const [error, setError] = useState("");
   const [mensaje, setMensaje] = useState("");
+  const [scrollToApu, setScrollToApu] = useState(false);
+  const apuDetailRef = useRef<HTMLElement>(null);
 
   const [proyectoFiltro, setProyectoFiltro] = useState<string>("ALL");
   const [busquedaRecurso, setBusquedaRecurso] = useState("");
@@ -85,10 +88,11 @@ export default function Activities() {
     loadResources();
   }, []);
 
-  const openApu = async (id: string) => {
+  const openApu = async (id: string, shouldScroll = false) => {
     try {
       const res = await api.get<ActivityApuData>(`/apus/actividad/${id}`);
       setSelected(res.data);
+      setScrollToApu(shouldScroll);
       setError("");
       setMensaje("");
     } catch {
@@ -96,8 +100,18 @@ export default function Activities() {
     }
   };
 
+  useEffect(() => {
+    if (!selected || !scrollToApu) return;
+    apuDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setScrollToApu(false);
+  }, [selected, scrollToApu]);
+
   const addApuItem = async () => {
     if (!selected || !recursoId) return;
+    if (!Number.isFinite(Number(cantidad)) || Number(cantidad) < 1) {
+      setError("La cantidad por unidad de actividad debe ser como mínimo 1.");
+      return;
+    }
     try {
       await api.post("/apus", {
         actividadId: selected.id,
@@ -206,7 +220,7 @@ export default function Activities() {
           </div>
         </div>
 
-        <div className="table-wrapper">
+        <HorizontalTable>
           <table>
             <thead>
               <tr>
@@ -230,7 +244,7 @@ export default function Activities() {
                     <td>{x.unidad}</td>
                     <td><span className="project-badge">{nombreProyecto}</span></td>
                     <td>
-                      <button className="text-link" onClick={() => void openApu(x.id)}>
+                      <button className="text-link" onClick={() => void openApu(x.id, true)}>
                         Configurar APU
                       </button>
                     </td>
@@ -244,11 +258,11 @@ export default function Activities() {
               )}
             </tbody>
           </table>
-        </div>
+        </HorizontalTable>
       </section>
 
       {selected && (
-        <section className="panel data-panel apu-detail-panel">
+        <section className="panel data-panel apu-detail-panel" ref={apuDetailRef}>
           <div className="panel-heading">
             <div>
               <h2>APU: {selected.codigo} - {selected.nombre}</h2>
@@ -337,7 +351,7 @@ export default function Activities() {
                 className="text-input"
                 type="number"
                 step="0.0001"
-                min="0.0001"
+                min="1"
                 value={cantidad}
                 onChange={(e) => setCantidad(e.target.value)}
               />
@@ -352,7 +366,7 @@ export default function Activities() {
 
           {/* Tabla 1: Materiales */}
           <h3 style={{ marginTop: "24px", fontSize: "15px", color: "#172338" }}>Materiales de la Actividad</h3>
-          <div className="table-wrapper">
+          <HorizontalTable>
             <table>
               <thead>
                 <tr>
@@ -390,11 +404,11 @@ export default function Activities() {
                 )}
               </tbody>
             </table>
-          </div>
+          </HorizontalTable>
 
           {/* Tabla 2: Mano de Obra */}
           <h3 style={{ marginTop: "24px", fontSize: "15px", color: "#172338" }}>Mano de Obra (Cargos, Horas-Hombre y Salario)</h3>
-          <div className="table-wrapper">
+          <HorizontalTable>
             <table>
               <thead>
                 <tr>
@@ -432,11 +446,11 @@ export default function Activities() {
                 )}
               </tbody>
             </table>
-          </div>
+          </HorizontalTable>
 
           {/* Tabla 3: Equipos y Transporte */}
           <h3 style={{ marginTop: "24px", fontSize: "15px", color: "#172338" }}>Equipos y Transporte (Horas-Máquina / Renta Horaria)</h3>
-          <div className="table-wrapper">
+          <HorizontalTable>
             <table>
               <thead>
                 <tr>
@@ -474,7 +488,7 @@ export default function Activities() {
                 )}
               </tbody>
             </table>
-          </div>
+          </HorizontalTable>
 
           <div className="financial-summary">
             <p>Costo Materiales: <strong>{money(selected.apuCostoCache?.costoMateriales || 0)}</strong></p>

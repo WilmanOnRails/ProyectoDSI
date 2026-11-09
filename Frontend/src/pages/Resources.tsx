@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { Package, Search, Filter, Edit3 } from "lucide-react";
 import api from "../services/api";
+import HorizontalTable from "../components/HorizontalTable";
 
 type Resource = {
   id: string;
@@ -135,7 +136,7 @@ export default function Resources() {
           </div>
         </div>
 
-        <div className="table-wrapper" style={{ marginTop: "16px" }}>
+        <HorizontalTable style={{ marginTop: "16px" }}>
           <table>
             <thead>
               <tr>
@@ -171,7 +172,7 @@ export default function Resources() {
               )}
             </tbody>
           </table>
-        </div>
+        </HorizontalTable>
       </section>
 
       {editando && (
