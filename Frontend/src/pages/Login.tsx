@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Building2, Eye, EyeOff, LockKeyhole, Mail } from "lucide-react";
 import { isAxiosError } from "axios";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { login } from "../services/auth";
 import { saveAuthSession } from "../services/authSession";
 import "./Login.css";
@@ -178,13 +178,12 @@ export default function Login() {
                             <label className="login-label" htmlFor="login-password">
                                 Contraseña
                             </label>
-                            <a
+                            <Link
                                 className="login-forgot-link"
-                                href="#"
-                                onClick={(event) => event.preventDefault()}
+                                to="/recuperar-contrasena"
                             >
                                 ¿Olvidaste tu contraseña?
-                            </a>
+                            </Link>
                         </div>
                         <div className="login-input-wrap">
                             <LockKeyhole className="login-input-icon" size={19} aria-hidden="true" />

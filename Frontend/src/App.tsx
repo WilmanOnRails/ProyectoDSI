@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute.tsx";
 import DashboardLayout from "./layouts/DashboardLayout.tsx";
 import Login from "./pages/Login.tsx";
+import PasswordRecovery from "./pages/PasswordRecovery.tsx";
 import Dashboard from "./pages/dashboard.tsx";
 import Projects from "./pages/Projects.tsx";
 import Activities from "./pages/Activities.tsx";
@@ -15,6 +16,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/recuperar-contrasena" element={<PasswordRecovery />} />
         <Route
           element={
             <ProtectedRoute>
