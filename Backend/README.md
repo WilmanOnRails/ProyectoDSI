@@ -31,6 +31,16 @@
 $ npm install
 ```
 
+## Recuperación de contraseña
+
+El flujo de recuperación usa Resend. Configura estas variables en el entorno del backend, sin subir credenciales al repositorio:
+
+- `RESEND_API_KEY`: clave de API de Resend.
+- `EMAIL_FROM`: remitente verificado en Resend, por ejemplo `ProyectoDSI <no-reply@tu-dominio.com>`.
+- `FRONTEND_URL`: origen donde está publicado el frontend (por ejemplo, `http://localhost:5173` en desarrollo).
+
+La migración `20261110020000_password_reset_tokens` crea la tabla de tokens de un solo uso. Antes de desplegar el backend, aplícala con el proceso de migraciones aprobado para el entorno; no se ejecuta al iniciar la aplicación.
+
 ## Compile and run the project
 
 ```bash
