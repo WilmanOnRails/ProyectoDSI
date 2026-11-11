@@ -1,19 +1,34 @@
-import { Controller, Body, Post, HttpException, HttpStatus } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { ForgotPasswordDto } from './dto/forgot-password.dto.js';
 import { LoginDto } from './dto/login.dto.js';
+import { RegisterDto } from './dto/register.dto.js';
+import { ResetPasswordDto } from './dto/reset-password.dto.js';
 import { AuthService } from './auth.service.js';
 
 @Controller('auth')
 export class AuthController {
+  constructor(private readonly authService: AuthService) {}
 
-    constructor(private authService: AuthService) { }
-    @Post('login')
-    async login(
-        @Body() data: LoginDto
-    ) {
-        const usertoken = await this.authService.validateUser(data);
+  @Post('login')
+  @HttpCode(HttpStatus.OK)
+  login(@Body() data: LoginDto) {
+    return this.authService.login(data);
+  }
 
-        if (!usertoken) throw new HttpException('Credenciales invalidas', HttpStatus.UNAUTHORIZED);
+  @Post('register')
+  register(@Body() data: RegisterDto) {
+    return this.authService.register(data);
+  }
 
-        return usertoken;
-    }
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  forgotPassword(@Body() data: ForgotPasswordDto) {
+    return this.authService.forgotPassword(data.email);
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  resetPassword(@Body() data: ResetPasswordDto) {
+    return this.authService.resetPassword(data.token, data.password);
+  }
 }

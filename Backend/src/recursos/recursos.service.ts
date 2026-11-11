@@ -1,0 +1,868 @@
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
+import { Prisma, TipoRecurso } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service.js';
+import { calcularApu } from '../calculos/calculos.js';
+import { CambiarPrecioDto } from './dto/cambiar-precio.dto.js';
+import { CreateRecursoDto } from './dto/create-recurso.dto.js';
+import {
+  ImportarRecursoDto,
+  ImportarRecursosDto,
+} from './dto/importar-recursos.dto.js';
+import { QueryHistorialDto } from './dto/query-historial.dto.js';
+import { QueryRecursoDto } from './dto/query-recurso.dto.js';
+import { UpdateRecursoDto } from './dto/update-recurso.dto.js';
+
+@Injectable()
+export class RecursosService implements OnModuleInit {
+  private readonly logger = new Logger(RecursosService.name);
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  async onModuleInit() {
+    try {
+      await this.seedDefaults();
+    } catch (error) {
+      this.logger.error(
+        'No se pudieron cargar los recursos predeterminados',
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
+
+  /** Prefijo del código según el tipo de recurso (como en el Figma). */
+  private readonly prefijos: Record<TipoRecurso, string> = {
+    [TipoRecurso.material]: 'MAT',
+    [TipoRecurso.mano_obra]: 'MO',
+    [TipoRecurso.equipo]: 'EQ',
+    [TipoRecurso.transporte]: 'TRA',
+  };
+
+  /**
+   * Crea el recurso y registra su precio inicial en el historial.
+   * Todo va en una transacción: o se guardan ambos, o ninguno.
+   * Si no llega `codigo`, se genera automáticamente (MAT-0001, MO-0001...).
+   */
+  async create(createRecursoDto: CreateRecursoDto) {
+    const { registradoPor, codigo, ...datos } = createRecursoDto;
+    const maxIntentos = codigo ? 1 : 3;
+
+    for (let intento = 0; intento < maxIntentos; intento++) {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const codigoFinal =
+            codigo ?? (await this.generarCodigo(tx, datos.tipo));
+
+          const recurso = await tx.recurso.create({
+            data: { ...datos, codigo: codigoFinal },
+          });
+
+          await tx.historialPrecio.create({
+            data: {
+              recursoId: recurso.id,
+              precio: datos.costoUnitario,
+              fuente: datos.fuente ?? recurso.fuente,
+              registradoPor: registradoPor ?? null,
+            },
+          });
+
+          return recurso;
+        });
+      } catch (error) {
+        // Si dos procesos piden el mismo código a la vez, reintentamos.
+        if (
+          !codigo &&
+          this.esConflictoCodigo(error) &&
+          intento < maxIntentos - 1
+        ) {
+          continue;
+        }
+
+        throw this.traducirErrorPrisma(error);
+      }
+    }
+
+    throw new ConflictException(
+      'No se pudo generar un código único para el recurso',
+    );
+  }
+
+  async findAll(query: QueryRecursoDto) {
+    const where: Prisma.RecursoWhereInput = {};
+
+    if (query.tipo) {
+      where.tipo = query.tipo;
+    }
+    if (query.activo !== undefined) {
+      where.activo = query.activo === 'true';
+    }
+    if (query.categoria) {
+      where.categoria = query.categoria;
+    }
+    if (query.buscar) {
+      where.OR = [
+        { codigo: { contains: query.buscar, mode: 'insensitive' } },
+        { descripcion: { contains: query.buscar, mode: 'insensitive' } },
+        { categoria: { contains: query.buscar, mode: 'insensitive' } },
+        { nombreProveedor: { contains: query.buscar, mode: 'insensitive' } },
+      ];
+    }
+
+    const paginationRequested =
+      query.pagina !== undefined || query.limite !== undefined;
+    if (!paginationRequested) {
+      return this.prisma.recurso.findMany({
+        where,
+        orderBy: [{ tipo: 'asc' }, { codigo: 'asc' }],
+      });
+    }
+
+    const pagina = query.pagina ?? 1;
+    const limite = query.limite ?? 50;
+    const [items, total] = await Promise.all([
+      this.prisma.recurso.findMany({
+        where,
+        select: {
+          id: true,
+          codigo: true,
+          tipo: true,
+          categoria: true,
+          descripcion: true,
+          unidad: true,
+          costoUnitario: true,
+          proveedor: true,
+        },
+        orderBy: [{ tipo: 'asc' }, { codigo: 'asc' }],
+        skip: (pagina - 1) * limite,
+        take: limite,
+      }),
+      this.prisma.recurso.count({ where }),
+    ]);
+
+    return { items, total, pagina, limite };
+  }
+
+  async obtenerOpciones() {
+    const [categorias, unidades] = await Promise.all([
+      this.prisma.recurso.findMany({
+        where: { activo: true, categoria: { not: null } },
+        select: { categoria: true },
+        distinct: ['categoria'],
+        orderBy: { categoria: 'asc' },
+      }),
+      this.prisma.recurso.findMany({
+        where: { activo: true },
+        select: { unidad: true },
+        distinct: ['unidad'],
+        orderBy: { unidad: 'asc' },
+      }),
+    ]);
+
+    return {
+      categorias: categorias.flatMap((item) =>
+        item.categoria ? [item.categoria] : [],
+      ),
+      unidades: unidades.map((item) => item.unidad),
+    };
+  }
+
+  async findOne(id: string) {
+    const recurso = await this.prisma.recurso.findUnique({ where: { id } });
+
+    if (!recurso) {
+      throw new NotFoundException(`Recurso con ID ${id} no encontrado`);
+    }
+
+    return recurso;
+  }
+
+  async update(id: string, updateRecursoDto: UpdateRecursoDto) {
+    await this.findOne(id);
+
+    try {
+      return await this.prisma.recurso.update({
+        where: { id },
+        data: updateRecursoDto,
+      });
+    } catch (error) {
+      throw this.traducirErrorPrisma(error);
+    }
+  }
+
+  /** Borrado lógico: no rompe los APUs ni el historial que lo usan. */
+  async remove(id: string) {
+    await this.findOne(id);
+
+    return this.prisma.recurso.update({
+      where: { id },
+      data: { activo: false },
+    });
+  }
+
+  /**
+   * Cambia el precio vigente EN UNA TRANSACCIÓN:
+   *  1. inserta una fila nueva en historial_precios (nunca se sobrescribe),
+   *  2. actualiza el precio y la fecha del recurso,
+   *  3. recalcula en cascada el ApuCostoCache de todas las actividades que usan este recurso.
+   */
+  async cambiarPrecio(id: string, cambiarPrecioDto: CambiarPrecioDto) {
+    const actual = await this.findOne(id);
+    const dto = cambiarPrecioDto;
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.historialPrecio.create({
+          data: {
+            recursoId: id,
+            precio: dto.precio,
+            fuente: dto.fuente ?? actual.fuente,
+            registradoPor: dto.registradoPor ?? null,
+          },
+        });
+
+        const recursoActualizado = await tx.recurso.update({
+          where: { id },
+          data: {
+            costoUnitario: dto.precio,
+            fechaActualizacion: new Date(),
+            ...(dto.fuente !== undefined ? { fuente: dto.fuente } : {}),
+            ...(dto.proveedor !== undefined
+              ? { proveedor: dto.proveedor }
+              : {}),
+            ...(dto.nombreProveedor !== undefined
+              ? { nombreProveedor: dto.nombreProveedor }
+              : {}),
+            ...(dto.urlProducto !== undefined
+              ? { urlProducto: dto.urlProducto }
+              : {}),
+            ...(dto.imagenUrl !== undefined
+              ? { imagenUrl: dto.imagenUrl }
+              : {}),
+          },
+        });
+
+        // -----------------------------------------------------------------
+        // Recálculo en cascada del APU para todas las actividades afectadas
+        // -----------------------------------------------------------------
+        const detallesAfectados = await tx.apuDetalle.findMany({
+          where: { recursoId: id },
+          select: { actividadId: true },
+        });
+
+        const idsActividades = [
+          ...new Set(detallesAfectados.map((d) => d.actividadId)),
+        ];
+
+        for (const actividadId of idsActividades) {
+          // Traer TODOS los detalles de la receta de esta actividad
+          const receta = await tx.apuDetalle.findMany({
+            where: { actividadId },
+            include: { recurso: { select: { costoUnitario: true } } },
+          });
+
+          // Armar el mapa de precios actuales
+          const preciosMapa: Record<string, Prisma.Decimal> = {};
+          const detallesParaCalculo = receta.map((det) => {
+            preciosMapa[det.recursoId] = det.recurso.costoUnitario;
+            return {
+              recursoId: det.recursoId,
+              tipo: det.recursoId === id ? 'tipo_determinado' : 'material', // se resolverá bien con el tipo del recurso si lo incluimos
+              cantidadPorUnidad: det.cantidadPorUnidad,
+            };
+          });
+
+          // Necesitamos también el tipo del recurso en cada detalle
+          const recetaCompleta = await tx.apuDetalle.findMany({
+            where: { actividadId },
+            include: {
+              recurso: { select: { id: true, tipo: true, costoUnitario: true } },
+            },
+          });
+
+          const preciosMap: Record<string, Prisma.Decimal> = {};
+          const detallesCalculo = recetaCompleta.map((det) => {
+            preciosMap[det.recursoId] = det.recurso.costoUnitario;
+            return {
+              recursoId: det.recursoId,
+              tipo: det.recurso.tipo,
+              cantidadPorUnidad: det.cantidadPorUnidad,
+            };
+          });
+
+          const costoCalculado = calcularApu(detallesCalculo, preciosMap);
+
+          await tx.apuCostoCache.upsert({
+            where: { actividadId },
+            update: {
+              costoMateriales: costoCalculado.costoMateriales,
+              costoManoObra: costoCalculado.costoManoObra,
+              costoEquipo: costoCalculado.costoEquipo,
+              costoTransporte: costoCalculado.costoTransporte,
+              costoTotal: costoCalculado.costoTotal,
+              fechaCalculo: new Date(),
+            },
+            create: {
+              actividadId,
+              costoMateriales: costoCalculado.costoMateriales,
+              costoManoObra: costoCalculado.costoManoObra,
+              costoEquipo: costoCalculado.costoEquipo,
+              costoTransporte: costoCalculado.costoTransporte,
+              costoTotal: costoCalculado.costoTotal,
+              fechaCalculo: new Date(),
+            },
+          });
+        }
+
+        return recursoActualizado;
+      }, { maxWait: 10_000, timeout: 30_000 });
+    } catch (error) {
+      throw this.traducirErrorPrisma(error);
+    }
+  }
+
+  async historial(id: string, query: QueryHistorialDto) {
+    await this.findOne(id);
+
+    return this.prisma.historialPrecio.findMany({
+      where: {
+        recursoId: id,
+        ...(query.desde || query.hasta
+          ? {
+              fecha: {
+                ...(query.desde ? { gte: new Date(query.desde) } : {}),
+                ...(query.hasta ? { lte: new Date(query.hasta) } : {}),
+              },
+            }
+          : {}),
+      },
+      orderBy: { fecha: 'desc' },
+    });
+  }
+
+  /**
+   * Importa productos del scraping de forma idempotente.
+   * La llave es proveedor + urlProducto:
+   *  - si no existe, lo crea (con código automático y precio inicial),
+   *  - si existe y cambió el precio, agrega historial y actualiza el vigente,
+   *  - si existe y el precio es igual, solo refresca metadatos.
+   */
+  async importar(importarRecursosDto: ImportarRecursosDto) {
+    const resultado = {
+      total: importarRecursosDto.recursos.length,
+      creados: 0,
+      actualizados: 0,
+      sinCambios: 0,
+      errores: [] as Array<{ urlProducto: string; mensaje: string }>,
+    };
+
+    for (const item of importarRecursosDto.recursos) {
+      try {
+        const existente = await this.prisma.recurso.findUnique({
+          where: {
+            proveedor_urlProducto: {
+              proveedor: item.proveedor,
+              urlProducto: item.urlProducto,
+            },
+          },
+        });
+
+        if (!existente) {
+          await this.create({
+            tipo: item.tipo ?? TipoRecurso.material,
+            categoria: item.categoria,
+            descripcion: item.descripcion,
+            unidad: item.unidad ?? 'Unidad',
+            costoUnitario: item.precio,
+            fuente: item.fuente ?? item.proveedor,
+            proveedor: item.proveedor,
+            nombreProveedor: item.nombreProveedor ?? item.descripcion,
+            urlProducto: item.urlProducto,
+            imagenUrl: item.imagenUrl,
+            registradoPor: item.registradoPor,
+          });
+          resultado.creados++;
+          continue;
+        }
+
+        if (!existente.costoUnitario.equals(item.precio)) {
+          // Actualización directa del precio y el historial sin disparar recálculo de APU masivo en importación
+          await this.prisma.$transaction(async (tx) => {
+            await tx.historialPrecio.create({
+              data: {
+                recursoId: existente.id,
+                precio: item.precio,
+                fuente: item.fuente ?? item.proveedor,
+                registradoPor: item.registradoPor ?? null,
+              },
+            });
+
+            await tx.recurso.update({
+              where: { id: existente.id },
+              data: {
+                costoUnitario: item.precio,
+                fechaActualizacion: new Date(),
+                fuente: item.fuente ?? item.proveedor,
+                proveedor: item.proveedor,
+                nombreProveedor: item.nombreProveedor ?? item.descripcion,
+                urlProducto: item.urlProducto,
+                imagenUrl: item.imagenUrl,
+              },
+            });
+          });
+
+          await this.actualizarMetadatos(existente.id, item);
+          resultado.actualizados++;
+        } else {
+          await this.actualizarMetadatos(existente.id, item);
+          resultado.sinCambios++;
+        }
+      } catch (error) {
+        resultado.errores.push({
+          urlProducto: item.urlProducto,
+          mensaje: error instanceof Error ? error.message : 'Error inesperado',
+        });
+      }
+    }
+
+    return resultado;
+  }
+
+  private actualizarMetadatos(id: string, item: ImportarRecursoDto) {
+    return this.prisma.recurso.update({
+      where: { id },
+      data: {
+        descripcion: item.descripcion,
+        ...(item.categoria !== undefined ? { categoria: item.categoria } : {}),
+        ...(item.unidad !== undefined ? { unidad: item.unidad } : {}),
+        ...(item.nombreProveedor !== undefined
+          ? { nombreProveedor: item.nombreProveedor }
+          : {}),
+        ...(item.imagenUrl !== undefined ? { imagenUrl: item.imagenUrl } : {}),
+      },
+    });
+  }
+
+  /** Genera el siguiente código del tipo: MAT-0001, MO-0001, EQ-0001, TRA-0001. */
+  private async generarCodigo(
+    tx: Prisma.TransactionClient,
+    tipo: TipoRecurso,
+  ): Promise<string> {
+    const prefijo = this.prefijos[tipo];
+    const ultimo = await tx.recurso.findFirst({
+      where: { codigo: { startsWith: `${prefijo}-` } },
+      orderBy: { codigo: 'desc' },
+      select: { codigo: true },
+    });
+
+    const ultimoNumero = ultimo
+      ? Number.parseInt(ultimo.codigo.split('-')[1] ?? '0', 10)
+      : 0;
+
+    return `${prefijo}-${String(ultimoNumero + 1).padStart(4, '0')}`;
+  }
+
+  private esConflictoCodigo(error: unknown): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002' &&
+      Array.isArray(error.meta?.target) &&
+      (error.meta.target as string[]).includes('codigo')
+    );
+  }
+
+  /** Convierte errores de Prisma en errores HTTP en español. */
+  private traducirErrorPrisma(error: unknown): Error {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2002') {
+        const campos = Array.isArray(error.meta?.target)
+          ? (error.meta.target as string[]).join(', ')
+          : 'código o proveedor/url';
+        return new ConflictException(
+          `Ya existe un recurso con el mismo ${campos}`,
+        );
+      }
+
+      if (error.code === 'P2025') {
+        return new NotFoundException('Recurso no encontrado');
+      }
+    }
+
+    return error instanceof Error ? error : new Error('Error inesperado');
+  }
+
+  async seedDefaults() {
+    const predeterminados: Array<{
+      tipo: TipoRecurso;
+      descripcion: string;
+      unidad: string;
+      costoUnitario: number;
+      categoria: string;
+      fuente: string;
+    }> = [
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Oficial albañil',
+        unidad: 'Hra',
+        costoUnitario: 120,
+        categoria: 'Mano de Obra',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Ayudante / Peón',
+        unidad: 'Hra',
+        costoUnitario: 80,
+        categoria: 'Mano de Obra',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Capataz de obra',
+        unidad: 'Hra',
+        costoUnitario: 160,
+        categoria: 'Mano de Obra',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Operador de maquinaria',
+        unidad: 'Hra',
+        costoUnitario: 150,
+        categoria: 'Mano de Obra',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Retroexcavadora',
+        unidad: 'Hra',
+        costoUnitario: 1200,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Compactador vibratorio (Plancha)',
+        unidad: 'Hra',
+        costoUnitario: 800,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Mezcladora de concreto 1 saco',
+        unidad: 'Hra',
+        costoUnitario: 450,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.transporte,
+        descripcion: 'Camión de volteo (Volqueta)',
+        unidad: 'Viaje',
+        costoUnitario: 1500,
+        categoria: 'Transporte y Acarreo',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.transporte,
+        descripcion: 'Acarreo de material selecto',
+        unidad: 'm3',
+        costoUnitario: 250,
+        categoria: 'Transporte y Acarreo',
+        fuente: 'Catálogo predeterminado',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Ayudante de obra',
+        unidad: 'Hra',
+        costoUnitario: 62.5,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Topógrafo',
+        unidad: 'Hra',
+        costoUnitario: 100,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Dibujante técnico',
+        unidad: 'Hra',
+        costoUnitario: 2197.46,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Operador de camión cisterna',
+        unidad: 'Hra',
+        costoUnitario: 62.5,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Operador de motoniveladora',
+        unidad: 'Hra',
+        costoUnitario: 62.5,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Operador de compactador',
+        unidad: 'Hra',
+        costoUnitario: 62.5,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Operador de retroexcavadora',
+        unidad: 'Hra',
+        costoUnitario: 62.5,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.mano_obra,
+        descripcion: 'Operador de camión volquete',
+        unidad: 'Hra',
+        costoUnitario: 62.5,
+        categoria: 'Mano de Obra',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Camión de 2 toneladas',
+        unidad: 'Hra',
+        costoUnitario: 200,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Herramientas menores',
+        unidad: 'Hra',
+        costoUnitario: 80,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Estación total',
+        unidad: 'Hra',
+        costoUnitario: 2563.7,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Equipo de topografía',
+        unidad: 'Hra',
+        costoUnitario: 2395.5,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Tractor D-6',
+        unidad: 'Hra',
+        costoUnitario: 2929.94,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Retroexcavadora de movimiento de tierra',
+        unidad: 'Hra',
+        costoUnitario: 1464.97,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Volquete para desalojo',
+        unidad: 'Hra',
+        costoUnitario: 1729.38,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Camión cisterna',
+        unidad: 'Hra',
+        costoUnitario: 572.26,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Motoniveladora',
+        unidad: 'Hra',
+        costoUnitario: 2746.82,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Compactador',
+        unidad: 'Hra',
+        costoUnitario: 2014.34,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.equipo,
+        descripcion: 'Camión volquete para material selecto',
+        unidad: 'Hra',
+        costoUnitario: 2400.77,
+        categoria: 'Equipos y Maquinaria',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.transporte,
+        descripcion: 'Traslado Lowboy - Tractor D-6',
+        unidad: 'Viaje',
+        costoUnitario: 25637.01,
+        categoria: 'Transporte y Acarreo',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.transporte,
+        descripcion: 'Traslado Lowboy - Retroexcavadora',
+        unidad: 'Viaje',
+        costoUnitario: 25637.01,
+        categoria: 'Transporte y Acarreo',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.transporte,
+        descripcion: 'Traslado Lowboy - Compactador',
+        unidad: 'Viaje',
+        costoUnitario: 25637.01,
+        categoria: 'Transporte y Acarreo',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.transporte,
+        descripcion: 'Traslado Lowboy - Motoniveladora',
+        unidad: 'Viaje',
+        costoUnitario: 25634,
+        categoria: 'Transporte y Acarreo',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.material,
+        descripcion: 'Agua',
+        unidad: 'galón',
+        costoUnitario: 0.9,
+        categoria: 'Materiales de Construcción',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.material,
+        descripcion: 'Madera de pino',
+        unidad: 'Vrs/pulg2',
+        costoUnitario: 15,
+        categoria: 'Materiales de Construcción',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+      {
+        tipo: TipoRecurso.material,
+        descripcion: 'Material selecto',
+        unidad: 'm3',
+        costoUnitario: 160,
+        categoria: 'Materiales de Construcción',
+        fuente: 'Modelo PPTO_Horizontal.xlsx',
+      },
+    ];
+
+    let creados = 0;
+    for (const r of predeterminados) {
+      if (await this.insertarPredeterminado(r)) creados++;
+    }
+
+    return {
+      mensaje:
+        'Recursos predeterminados de mano de obra, equipos, transporte y materiales verificados.',
+      creados,
+    };
+  }
+
+  private async insertarPredeterminado(recurso: {
+    tipo: TipoRecurso;
+    descripcion: string;
+    unidad: string;
+    costoUnitario: number;
+    categoria: string;
+    fuente: string;
+  }): Promise<boolean> {
+    for (let intento = 0; intento < 3; intento++) {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const existentes = await tx.recurso.findMany({
+            where: {
+              tipo: recurso.tipo,
+            },
+            select: { id: true, descripcion: true },
+          });
+          const clave = (descripcion: string) =>
+            descripcion.toLocaleLowerCase().normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '');
+          const aliases: Record<string, string[]> = {
+            'Retroexcavadora de movimiento de tierra': [
+              'Retroexcavadora (referencia Excel)',
+            ],
+          };
+          const nombresAnteriores = [
+            `${recurso.descripcion} (referencia Excel)`,
+            ...(aliases[recurso.descripcion] ?? []),
+          ].map(clave);
+          const existente = existentes.find(
+            (item) =>
+              clave(item.descripcion) === clave(recurso.descripcion) ||
+              nombresAnteriores.includes(clave(item.descripcion)),
+          );
+          if (existente) {
+            if (existente.descripcion !== recurso.descripcion) {
+              await tx.recurso.update({
+                where: { id: existente.id },
+                data: { descripcion: recurso.descripcion },
+              });
+            }
+            return false;
+          }
+
+          const creado = await tx.recurso.create({
+            data: {
+              ...recurso,
+              codigo: await this.generarCodigo(tx, recurso.tipo),
+            },
+          });
+          await tx.historialPrecio.create({
+            data: {
+              recursoId: creado.id,
+              precio: recurso.costoUnitario,
+              fuente: recurso.fuente,
+            },
+          });
+          return true;
+        });
+      } catch (error) {
+        if (this.esConflictoCodigo(error) && intento < 2) continue;
+        throw this.traducirErrorPrisma(error);
+      }
+    }
+
+    return false;
+  }
+}
