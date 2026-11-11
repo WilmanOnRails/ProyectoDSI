@@ -3,6 +3,13 @@ import { FileUp, LoaderCircle, Trash2 } from "lucide-react";
 import api, { apiGet } from "../services/api";
 import { canManagePlatformData } from "../services/authSession";
 
+const ESTADOS_PROYECTO = [
+  "En elaboración",
+  "En ejecución",
+  "Finalizado",
+  "Cancelado",
+] as const;
+
 type Proyecto = { id: string; codigo?: string; nombre: string; cliente?: string; ubicacion?: string; estado?: string; };
 type Resultado = { mensaje: string; proyecto: Proyecto; presupuesto: { id: string; nombre: string; cantidadActividades: number }; paginasProcesadas: number };
 
@@ -15,6 +22,9 @@ export default function Projects() {
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
   const [proyectoAEliminar, setProyectoAEliminar] = useState<Proyecto | null>(null);
+  const [estadosActualizando, setEstadosActualizando] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const cargarProyectos = async () => {
     try {
@@ -63,6 +73,58 @@ export default function Projects() {
     } catch {
       setError("No se pudo eliminar el proyecto.");
       setProyectoAEliminar(null);
+    }
+  };
+
+  const cambiarEstado = async (proyecto: Proyecto, estado: string) => {
+    const estadoAnterior = proyecto.estado || "En elaboración";
+    if (estado === estadoAnterior || estadosActualizando.has(proyecto.id)) return;
+
+    setError("");
+    setEstadosActualizando((actuales) => new Set(actuales).add(proyecto.id));
+    setProyectos((actuales) =>
+      actuales.map((actual) =>
+        actual.id === proyecto.id ? { ...actual, estado } : actual,
+      ),
+    );
+
+    try {
+      await api.patch(`/projects/${proyecto.id}`, { estado });
+    } catch (e: unknown) {
+      const message = (
+        e as { response?: { data?: { message?: string | string[] } } }
+      ).response?.data?.message;
+      setProyectos((actuales) =>
+        actuales.map((actual) =>
+          actual.id === proyecto.id
+            ? { ...actual, estado: estadoAnterior }
+            : actual,
+        ),
+      );
+      setError(
+        Array.isArray(message)
+          ? message.join(", ")
+          : message || "No se pudo actualizar el estado del proyecto.",
+      );
+    } finally {
+      setEstadosActualizando((actuales) => {
+        const siguientes = new Set(actuales);
+        siguientes.delete(proyecto.id);
+        return siguientes;
+      });
+    }
+  };
+
+  const claseEstado = (estado: string) => {
+    switch (estado) {
+      case "En ejecución":
+        return "status-en-proceso";
+      case "Finalizado":
+        return "status-finalizado";
+      case "Cancelado":
+        return "status-cancelado";
+      default:
+        return "status-en-elaboracion";
     }
   };
 
@@ -130,7 +192,34 @@ export default function Projects() {
                   <td><strong>{p.nombre}</strong></td>
                   <td>{p.cliente || "—"}</td>
                   <td>{p.ubicacion || "—"}</td>
-                  <td><span className="status status-en-proceso">{p.estado || "En elaboración"}</span></td>
+                  <td>
+                    {canEdit ? (
+                      <select
+                        className={`status status-select ${claseEstado(p.estado || "En elaboración")}`}
+                        value={p.estado || "En elaboración"}
+                        onChange={(event) =>
+                          void cambiarEstado(p, event.target.value)
+                        }
+                        disabled={estadosActualizando.has(p.id)}
+                        aria-label={`Cambiar estado de ${p.nombre}`}
+                      >
+                        {!ESTADOS_PROYECTO.includes(
+                          p.estado as (typeof ESTADOS_PROYECTO)[number],
+                        ) && p.estado && (
+                          <option value={p.estado}>{p.estado}</option>
+                        )}
+                        {ESTADOS_PROYECTO.map((estado) => (
+                          <option key={estado} value={estado}>
+                            {estado}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className={`status ${claseEstado(p.estado || "En elaboración")}`}>
+                        {p.estado || "En elaboración"}
+                      </span>
+                    )}
+                  </td>
                   {canEdit && <td>
                     <button className="icon-btn-danger" onClick={() => setProyectoAEliminar(p)} title="Eliminar proyecto">
                       <Trash2 size={16} />

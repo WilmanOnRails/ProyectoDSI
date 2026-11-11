@@ -1,8 +1,10 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { Pencil, Plus, Trash2, Search, Filter, FolderKanban } from "lucide-react";
-import api, { apiGet } from "../services/api";
+import api from "../services/api";
 import HorizontalTable from "../components/HorizontalTable";
-import { canManagePlatformData } from "../services/authSession";
+
+const ACTIVITY_PAGE_SIZE = 50;
+const RESOURCE_PAGE_SIZE = 100;
 
 type Activity = {
   id: string;
@@ -88,19 +90,46 @@ type ActivityApuData = Activity & {
   apuCostoCache?: ApuCache;
 };
 
+type ApuMutationResponse = ApuDetalle & {
+  apuCostoCache: ApuCache;
+};
+
+type ApuDeleteResponse = Pick<ApuDetalle, "id"> & {
+  apuCostoCache: ApuCache;
+};
+
+type ActivityPage = {
+  items: Activity[];
+  total: number;
+  pagina: number;
+  limite: number;
+};
+
+type ResourcePage = {
+  items: Resource[];
+  total: number;
+  pagina: number;
+  limite: number;
+};
+
 const money = (v: string | number) =>
   `C$ ${Number(v || 0).toLocaleString("es-NI", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const PAGE_SIZE = 50;
 
 export default function Activities() {
-  const canEdit = canManagePlatformData();
   const [items, setItems] = useState<Activity[]>([]);
+  const [totalActivities, setTotalActivities] = useState(0);
+  const [page, setPage] = useState(1);
+  const [activitiesLoading, setActivitiesLoading] = useState(true);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [budgets, setBudgets] = useState<BudgetOption[]>([]);
+  const [budgetsLoaded, setBudgetsLoaded] = useState(false);
   const [resources, setResources] = useState<Resource[]>([]);
+  const [resourcesLoading, setResourcesLoading] = useState(false);
   const [selected, setSelected] = useState<ActivityApuData | null>(null);
   const [recursoId, setRecursoId] = useState("");
   const [cantidad, setCantidad] = useState("1");
+  const [savingApuItem, setSavingApuItem] = useState(false);
+  const [loadingApuId, setLoadingApuId] = useState<string | null>(null);
   const [tipoSeccion, setTipoSeccion] = useState<"material" | "mano_obra" | "equipo_transporte">("material");
   const [error, setError] = useState("");
   const [mensaje, setMensaje] = useState("");
@@ -118,65 +147,159 @@ export default function Activities() {
 
   const [proyectoFiltro, setProyectoFiltro] = useState<string>("ALL");
   const [busquedaRecurso, setBusquedaRecurso] = useState("");
+  const [busquedaRecursoAplicada, setBusquedaRecursoAplicada] = useState("");
   const [categoriaFiltro, setCategoriaFiltro] = useState("ALL");
-  const [resourceSearchApplied, setResourceSearchApplied] = useState("");
-  const activityQueryKey = JSON.stringify([
-    page,
-    proyectoFiltro,
-    reloadCounter,
-  ]);
-  const activitiesLoading = loadedActivityQuery !== activityQueryKey;
   const selectedActivityId = selected?.id;
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     const params = {
       pagina: page,
-      limite: PAGE_SIZE,
+      limite: ACTIVITY_PAGE_SIZE,
       ...(proyectoFiltro !== "ALL" ? { proyectoId: proyectoFiltro } : {}),
     };
-    const request =
-      reloadCounter === 0
-        ? apiGet<ActivityPage>("/activities", params)
-        : api.get<ActivityPage>("/activities", { params }).then(({ data }) => data);
 
-    request
-      .then((result) => {
+    api
+      .get<ActivityPage>("/activities", {
+        params,
+        signal: controller.signal,
+      })
+      .then(({ data }) => {
         if (!active) return;
-        setItems(result.items);
-        setTotalActivities(result.total);
+        setItems(data.items);
+        setTotalActivities(data.total);
       })
       .catch(() => {
-        if (active) setError("No se pudieron cargar las actividades.");
+        if (active && !controller.signal.aborted) {
+          setError("No se pudieron cargar las actividades.");
+        }
       })
       .finally(() => {
-        if (active) setLoadedActivityQuery(activityQueryKey);
+        if (active && !controller.signal.aborted) setActivitiesLoading(false);
       });
 
-  const loadProjectsAndBudgets = () => {
-    Promise.all([
-      api.get<ProjectOption[]>("/projects"),
-      api.get<BudgetOption[]>("/presupuestos"),
-    ])
-      .then(([projectResponse, budgetResponse]) => {
-        setProjects(projectResponse.data);
-        setBudgets(budgetResponse.data);
-      })
-      .catch(() => setError("No se pudieron cargar los proyectos y presupuestos."));
-  };
-
-  const loadResources = () => {
-    api
-      .get<Resource[]>("/recursos")
-      .then((r) => setResources(r.data))
-      .catch(() => {});
-  };
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [page, proyectoFiltro]);
 
   useEffect(() => {
-    loadActivities();
-    loadProjectsAndBudgets();
-    loadResources();
+    let active = true;
+    const controller = new AbortController();
+    api
+      .get<ProjectOption[]>("/projects", { signal: controller.signal })
+      .then(({ data }) => {
+        if (active) setProjects(data);
+      })
+      .catch(() => {
+        if (active && !controller.signal.aborted) {
+          setError("No se pudieron cargar los proyectos.");
+        }
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setBusquedaRecursoAplicada(busquedaRecurso.trim()),
+      250,
+    );
+    return () => window.clearTimeout(timer);
+  }, [busquedaRecurso]);
+
+  useEffect(() => {
+    if (!selectedActivityId) return;
+
+    let active = true;
+    const controller = new AbortController();
+    const tipos =
+      tipoSeccion === "equipo_transporte"
+        ? ["equipo", "transporte"]
+        : [tipoSeccion];
+    const requests = tipos.map((tipo) =>
+      api.get<ResourcePage>("/recursos", {
+        signal: controller.signal,
+        params: {
+          activo: true,
+          tipo,
+          pagina: 1,
+          limite: RESOURCE_PAGE_SIZE,
+          ...(categoriaFiltro !== "ALL" ? { categoria: categoriaFiltro } : {}),
+          ...(busquedaRecursoAplicada
+            ? { buscar: busquedaRecursoAplicada }
+            : {}),
+        },
+      }),
+    );
+
+    Promise.all(requests)
+      .then((responses) => {
+        if (active) {
+          setResources(responses.flatMap(({ data }) => data.items));
+          setResourcesLoading(false);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setResources([]);
+          setResourcesLoading(false);
+          if (!controller.signal.aborted) {
+            setError("No se pudieron cargar los recursos para el APU.");
+          }
+        }
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [
+    selectedActivityId,
+    tipoSeccion,
+    categoriaFiltro,
+    busquedaRecursoAplicada,
+  ]);
+
+  const loadBudgets = async (): Promise<boolean> => {
+    if (budgetsLoaded) return true;
+
+    try {
+      const { data } = await api.get<BudgetOption[]>("/presupuestos");
+      setBudgets(data);
+      setBudgetsLoaded(true);
+      return true;
+    } catch {
+      setError("No se pudieron cargar los presupuestos.");
+      return false;
+    }
+  };
+
+  const reloadActivities = async () => {
+    const params = {
+      pagina: page,
+      limite: ACTIVITY_PAGE_SIZE,
+      ...(proyectoFiltro !== "ALL" ? { proyectoId: proyectoFiltro } : {}),
+    };
+    const { data } = await api.get<ActivityPage>("/activities", { params });
+    setItems(data.items);
+    setTotalActivities(data.total);
+  };
+
+  const changeResourceSection = (
+    section: "material" | "mano_obra" | "equipo_transporte",
+  ) => {
+    if (section === tipoSeccion) return;
+    setResources([]);
+    setResourcesLoading(true);
+    setTipoSeccion(section);
+    setRecursoId("");
+  };
 
   const presupuestosDelProyecto = useMemo(
     () => budgets.filter((budget) => budget.proyectoId === activityForm.proyectoId),
@@ -212,14 +335,21 @@ export default function Activities() {
   }, [items, activityForm.proyectoId, activityForm.capituloCodigo, activityForm.capituloNombre]);
 
   const openApu = async (id: string, shouldScroll = false) => {
+    setLoadingApuId(id);
+    setSelected(null);
+    setResources([]);
+    setResourcesLoading(true);
     try {
-      const data = await apiGet<ActivityApuData>(`/apus/actividad/${id}`);
-      setSelected(data);
+      const res = await api.get<ActivityApuData>(`/apus/actividad/${id}`);
+      setSelected(res.data);
       setScrollToApu(shouldScroll);
       setError("");
       setMensaje("");
     } catch {
+      setResourcesLoading(false);
       setError("No se pudo cargar el APU de la actividad.");
+    } finally {
+      setLoadingApuId(null);
     }
   };
 
@@ -229,41 +359,122 @@ export default function Activities() {
   }, [selected, scrollToApu]);
 
   const addApuItem = async () => {
-    if (!selected || !recursoId) return;
+    if (!selected || !recursoId || savingApuItem) return;
     if (!Number.isFinite(Number(cantidad)) || Number(cantidad) < 1) {
       setError("La cantidad por unidad de actividad debe ser como mínimo 1.");
       return;
     }
+    const recurso = resources.find((item) => item.id === recursoId);
+    if (!recurso) {
+      setError("Selecciona un recurso disponible para agregar al APU.");
+      return;
+    }
+
+    const actividadId = selected.id;
+    const detalleOptimistaId = `optimistic-${Date.now()}`;
+    const cantidadAgregada = Number(cantidad);
+    const detalleExistente =
+      recurso.tipo === "material"
+        ? selected.apuDetalles?.find((detalle) => detalle.recursoId === recurso.id)
+        : undefined;
+    const detalleOptimista: ApuDetalle = detalleExistente
+      ? {
+          ...detalleExistente,
+          cantidadPorUnidad:
+            Number(detalleExistente.cantidadPorUnidad) + cantidadAgregada,
+        }
+      : {
+          id: detalleOptimistaId,
+          recursoId: recurso.id,
+          cantidadPorUnidad: cantidadAgregada,
+          recurso,
+        };
+    setSavingApuItem(true);
+    setError("");
+    setMensaje("");
+    setSelected((actual) => {
+      if (!actual || actual.id !== actividadId) return actual;
+      const detalles = actual.apuDetalles ?? [];
+      return {
+        ...actual,
+        apuDetalles: detalleExistente
+          ? detalles.map((detalle) =>
+              detalle.id === detalleExistente.id ? detalleOptimista : detalle,
+            )
+          : [...detalles, detalleOptimista],
+      };
+    });
+
     try {
-      await api.post("/apus", {
-        actividadId: selected.id,
+      const { data } = await api.post<ApuMutationResponse>("/apus", {
+        actividadId,
         recursoId,
-        cantidadPorUnidad: Number(cantidad),
+        cantidadPorUnidad: cantidadAgregada,
+      });
+      setSelected((actual) => {
+        if (!actual || actual.id !== actividadId) return actual;
+        const detalles = (actual.apuDetalles ?? []).filter(
+          (detalle) =>
+            detalle.id !== detalleOptimistaId && detalle.id !== data.id,
+        );
+        return {
+          ...actual,
+          apuDetalles: [...detalles, data],
+          apuCostoCache: data.apuCostoCache,
+        };
       });
       setMensaje("Recurso agregado al APU correctamente.");
       setRecursoId("");
       setCantidad("1");
-      reloadActivities();
-      await openApu(selected.id);
     } catch (err: unknown) {
-      const apiError = err as { response?: { data?: { message?: string } } };
-      setError(apiError.response?.data?.message || "No se pudo agregar el recurso al APU.");
+      const message = (
+        err as { response?: { data?: { message?: string } } }
+      ).response?.data?.message;
+      setSelected((actual) => {
+        if (!actual || actual.id !== actividadId) return actual;
+        return {
+          ...actual,
+          apuDetalles: detalleExistente
+            ? (actual.apuDetalles ?? []).map((detalle) =>
+                detalle.id === detalleExistente.id
+                  ? detalleExistente
+                  : detalle,
+              )
+            : (actual.apuDetalles ?? []).filter(
+                (detalle) => detalle.id !== detalleOptimistaId,
+              ),
+        };
+      });
+      setError(
+        message || "No se pudo agregar el recurso al APU.",);
+    } finally {
+      setSavingApuItem(false);
     }
   };
 
   const removeApuItem = async (apuId: string) => {
     if (!selected) return;
     try {
-      await api.delete(`/apus/${apuId}`);
+      const { data } = await api.delete<ApuDeleteResponse>(`/apus/${apuId}`);
+      setSelected((actual) =>
+        actual
+          ? {
+              ...actual,
+              apuDetalles: actual.apuDetalles?.filter(
+                (detalle) => detalle.id !== data.id,
+              ),
+              apuCostoCache: data.apuCostoCache,
+            }
+          : actual,
+      );
       setMensaje("Recurso eliminado del APU.");
-      reloadActivities();
-      await openApu(selected.id);
     } catch {
       setError("No se pudo eliminar el recurso del APU.");
     }
   };
 
-  const abrirNuevaActividad = () => {
+  const abrirNuevaActividad = async () => {
+    if (!(await loadBudgets())) return;
     setEditingActivityId(null);
     setEditingBudgetItemId(null);
     setActivityForm(EMPTY_ACTIVITY_FORM);
@@ -272,7 +483,8 @@ export default function Activities() {
     setActivityModalOpen(true);
   };
 
-  const abrirEdicionActividad = (activity: Activity) => {
+  const abrirEdicionActividad = async (activity: Activity) => {
+    if (!(await loadBudgets())) return;
     const budgetItem =
       activity.presupuestoItems?.find(
         (item) =>
@@ -345,21 +557,19 @@ export default function Activities() {
         });
       }
 
-      const [activityResponse, budgetResponse] = await Promise.all([
-        api.get<Activity[]>("/activities"),
-        api.get<BudgetOption[]>("/presupuestos"),
-      ]);
-      setItems(activityResponse.data);
-      setBudgets(budgetResponse.data);
+      await reloadActivities();
       setMensaje(
         editingActivityId
           ? "Actividad actualizada correctamente."
           : "Actividad agregada al proyecto y presupuesto. Su código y APU se generaron automáticamente.",
       );
       setActivityModalOpen(false);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = (
+        err as { response?: { data?: { message?: string } } }
+      ).response?.data?.message;
       setError(
-        err?.response?.data?.message || "No se pudo guardar la actividad.",
+        message || "No se pudo guardar la actividad.",
       );
     } finally {
       setSavingActivity(false);
@@ -390,17 +600,15 @@ export default function Activities() {
         `/activities/${activity.id}/presupuesto-items/${budgetItem.id}`,
       );
       if (selected?.id === activity.id) setSelected(null);
-      const [activityResponse, budgetResponse] = await Promise.all([
-        api.get<Activity[]>("/activities"),
-        api.get<BudgetOption[]>("/presupuestos"),
-      ]);
-      setItems(activityResponse.data);
-      setBudgets(budgetResponse.data);
+      await reloadActivities();
       setMensaje("Actividad quitada del proyecto y presupuesto.");
       setError("");
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = (
+        err as { response?: { data?: { message?: string } } }
+      ).response?.data?.message;
       setError(
-        err?.response?.data?.message || "No se pudo eliminar la actividad.",
+        message || "No se pudo eliminar la actividad.",
       );
     }
   };
@@ -443,6 +651,7 @@ export default function Activities() {
     try {
       const precioAnterior = Number(detalleEditando.recurso.costoUnitario);
       const cantidadAnterior = Number(detalleEditando.cantidadPorUnidad);
+      let apuActualizado: ActivityApuData | null = null;
 
       if (precioNuevo !== precioAnterior) {
         await api.patch(`/recursos/${detalleEditando.recurso.id}/precio`, {
@@ -459,63 +668,49 @@ export default function Activities() {
       }
 
       if (cantidadNueva !== cantidadAnterior) {
-        await api.patch(`/apus/${detalleEditando.id}`, {
+        const { data } = await api.patch<ApuMutationResponse>(
+          `/apus/${detalleEditando.id}`,
+          {
           cantidadPorUnidad: cantidadNueva,
-        });
+          },
+        );
+        apuActualizado = {
+          ...selected,
+          apuDetalles: selected.apuDetalles?.map((detalle) =>
+            detalle.id === data.id ? data : detalle,
+          ),
+          apuCostoCache: data.apuCostoCache,
+        };
       }
 
-      const actualizado = await api.get<ActivityApuData>(
-        `/apus/actividad/${selected.id}`,
-      );
-      setSelected(actualizado.data);
+      if (!apuActualizado) {
+        const actualizado = await api.get<ActivityApuData>(
+          `/apus/actividad/${selected.id}`,
+        );
+        apuActualizado = actualizado.data;
+      }
+
+      setSelected(apuActualizado);
       setMensaje("Precio y cantidad del recurso actualizados correctamente.");
       setDetalleEditando(null);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = (
+        err as { response?: { data?: { message?: string } } }
+      ).response?.data?.message;
       setError(
-        err?.response?.data?.message ||
-          "No se pudo completar la edición. Si se cambió el precio, verifica el catálogo de recursos.",
+        message || "No se pudo completar la edición. Si se cambió el precio, verifica el catálogo de recursos.",
       );
-    } finally {
-      setGuardandoEdicion(false);
     }
   };
-
-  const proyectosMap = useMemo(() => {
-    const map = new Map<string, string>();
-    items.forEach((act) => {
-      act.presupuestoItems?.forEach((pi) => {
-        const p = pi.presupuesto?.proyecto;
-        if (p) {
-          map.set(p.id, p.nombre);
-        }
-      });
-    });
-    return Array.from(map.entries()).map(([id, nombre]) => ({ id, nombre }));
-  }, [items]);
-
-  const actividadesFiltradas = useMemo(() => {
-    if (proyectoFiltro === "ALL") return items;
-    return items.filter((act) =>
-      act.presupuestoItems?.some((pi) => pi.presupuesto?.proyecto?.id === proyectoFiltro)
-    );
-  }, [items, proyectoFiltro]);
 
   // Recursos filtrados según la sección activa (Materiales, Mano de Obra, Equipos/Transporte)
   const recursosDisponibles = useMemo(() => {
     return resources.filter((r) => {
-      let matchTipo = false;
-      if (tipoSeccion === "material") matchTipo = r.tipo === "material";
-      else if (tipoSeccion === "mano_obra") matchTipo = r.tipo === "mano_obra";
-      else if (tipoSeccion === "equipo_transporte") matchTipo = r.tipo === "equipo" || r.tipo === "transporte";
-
-      const matchCat = categoriaFiltro === "ALL" || r.categoria === categoriaFiltro;
-      const texto = busquedaRecurso.toLowerCase();
-      const desc = (r.descripcion || "").toLowerCase();
-      const cod = (r.codigo || "").toLowerCase();
-      const matchTexto = !busquedaRecurso || desc.includes(texto) || cod.includes(texto);
-      return matchTipo && matchCat && matchTexto;
+      return tipoSeccion === "equipo_transporte"
+        ? r.tipo === "equipo" || r.tipo === "transporte"
+        : r.tipo === tipoSeccion;
     });
-  }, [resources, tipoSeccion, busquedaRecurso, categoriaFiltro]);
+  }, [resources, tipoSeccion]);
 
   // Desglosar detalles actuales de APU
   const detallesMateriales = useMemo(() => {
@@ -544,7 +739,7 @@ export default function Activities() {
         <div className="panel-heading">
           <div>
             <h2>Actividades registradas ({totalActivities})</h2>
-            <p>{error || mensaje || (canEdit ? "Seleccioná una actividad para configurar sus costos unitarios." : "Seleccioná una actividad para consultar sus costos unitarios.")}</p>
+            <p>{error || mensaje || "Seleccioná una actividad para configurar sus costos unitarios."}</p>
           </div>
           <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
             <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "center" }}>
@@ -553,17 +748,21 @@ export default function Activities() {
                 className="text-input"
                 style={{ width: "240px", padding: "8px" }}
                 value={proyectoFiltro}
-                onChange={(e) => setProyectoFiltro(e.target.value)}
+                onChange={(e) => {
+                  setActivitiesLoading(true);
+                  setPage(1);
+                  setProyectoFiltro(e.target.value);
+                }}
               >
-                <option value="ALL">Todos los proyectos ({items.length})</option>
-                {proyectosMap.map((p) => (
+                <option value="ALL">Todos los proyectos ({totalActivities})</option>
+                {projects.map((p) => (
                   <option key={p.id} value={p.id}>{p.nombre}</option>
                 ))}
               </select>
             </div>
             <button
               className="primary-button"
-              onClick={abrirNuevaActividad}
+              onClick={() => void abrirNuevaActividad()}
               disabled={projects.length === 0}
               title={projects.length === 0 ? "Primero crea un proyecto" : "Agregar actividad"}
             >
@@ -585,7 +784,7 @@ export default function Activities() {
               </tr>
             </thead>
             <tbody>
-              {actividadesFiltradas.map((x) => {
+              {items.map((x) => {
                 const itemProyecto =
                   x.presupuestoItems?.find(
                     (item) =>
@@ -602,12 +801,16 @@ export default function Activities() {
                     <td>{x.unidad}</td>
                     <td><span className="project-badge">{nombreProyecto}</span></td>
                     <td>
-                      <button className="text-link" onClick={() => void openApu(x.id, true)}>
-                        {canEdit ? "Configurar APU" : "Ver APU"}
+                      <button
+                        className="text-link"
+                        onClick={() => void openApu(x.id, true)}
+                        disabled={loadingApuId !== null}
+                      >
+                        Configurar APU
                       </button>
                       <button
                         className="text-link"
-                        onClick={() => abrirEdicionActividad(x)}
+                        onClick={() => void abrirEdicionActividad(x)}
                         title="Editar actividad"
                         style={{ marginLeft: "10px" }}
                       >
@@ -625,14 +828,14 @@ export default function Activities() {
                   </tr>
                 );
               })}
-              {!activitiesLoading && !items.length && (
-                <tr>
-                  <td colSpan={6}>No hay actividades registradas.</td>
-                </tr>
-              )}
               {activitiesLoading && (
                 <tr>
                   <td colSpan={6}>Cargando actividades...</td>
+                </tr>
+              )}
+              {!activitiesLoading && !items.length && (
+                <tr>
+                  <td colSpan={6}>No hay actividades registradas.</td>
                 </tr>
               )}
             </tbody>
@@ -642,26 +845,38 @@ export default function Activities() {
           <span>
             {totalActivities === 0
               ? "Sin actividades"
-              : `Mostrando ${(page - 1) * PAGE_SIZE + 1}-${Math.min(page * PAGE_SIZE, totalActivities)} de ${totalActivities}`}
+              : `Mostrando ${(page - 1) * ACTIVITY_PAGE_SIZE + 1}-${Math.min(page * ACTIVITY_PAGE_SIZE, totalActivities)} de ${totalActivities}`}
           </span>
           <div style={{ display: "flex", gap: "8px" }}>
             <button
               className="secondary-button"
-              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              onClick={() => {
+                setActivitiesLoading(true);
+                setPage((current) => Math.max(1, current - 1));
+              }}
               disabled={page === 1 || activitiesLoading}
             >
               Anterior
             </button>
             <button
               className="secondary-button"
-              onClick={() => setPage((current) => current + 1)}
-              disabled={page * PAGE_SIZE >= totalActivities || activitiesLoading}
+              onClick={() => {
+                setActivitiesLoading(true);
+                setPage((current) => current + 1);
+              }}
+              disabled={page * ACTIVITY_PAGE_SIZE >= totalActivities || activitiesLoading}
             >
               Siguiente
             </button>
           </div>
         </div>
       </section>
+
+      {loadingApuId && (
+        <section className="panel" role="status">
+          Cargando APU...
+        </section>
+      )}
 
       {selected && (
         <section className="panel data-panel apu-detail-panel" ref={apuDetailRef}>
@@ -685,19 +900,19 @@ export default function Activities() {
           <div style={{ display: "flex", gap: "10px", marginTop: "16px", borderBottom: "1px solid #e2e8f0", paddingBottom: "12px" }}>
             <button
               className={tipoSeccion === "material" ? "primary-button" : "secondary-button"}
-              onClick={() => { setTipoSeccion("material"); setRecursoId(""); }}
+              onClick={() => changeResourceSection("material")}
             >
               1. Materiales
             </button>
             <button
               className={tipoSeccion === "mano_obra" ? "primary-button" : "secondary-button"}
-              onClick={() => { setTipoSeccion("mano_obra"); setRecursoId(""); }}
+              onClick={() => changeResourceSection("mano_obra")}
             >
               2. Mano de Obra
             </button>
             <button
               className={tipoSeccion === "equipo_transporte" ? "primary-button" : "secondary-button"}
-              onClick={() => { setTipoSeccion("equipo_transporte"); setRecursoId(""); }}
+              onClick={() => changeResourceSection("equipo_transporte")}
             >
               3. Equipos y Transporte
             </button>
@@ -711,10 +926,14 @@ export default function Activities() {
                 className="text-input"
                 placeholder={
                   tipoSeccion === "material" ? "Buscar material..." :
-                  tipoSeccion === "mano_obra" ? "Buscar cargo o mano de obra..." : "Buscar equipo o transporte..."
+                    tipoSeccion === "mano_obra" ? "Buscar cargo o mano de obra..." : "Buscar equipo o transporte..."
                 }
                 value={busquedaRecurso}
-                onChange={(e) => setBusquedaRecurso(e.target.value)}
+                onChange={(e) => {
+                  setResources([]);
+                  setResourcesLoading(true);
+                  setBusquedaRecurso(e.target.value);
+                }}
               />
             </div>
             <div className="filter-input-wrapper">
@@ -722,7 +941,11 @@ export default function Activities() {
               <select
                 className="text-input"
                 value={categoriaFiltro}
-                onChange={(e) => setCategoriaFiltro(e.target.value)}
+                onChange={(e) => {
+                  setResources([]);
+                  setResourcesLoading(true);
+                  setCategoriaFiltro(e.target.value);
+                }}
               >
                 <option value="ALL">Todas las categorías</option>
                 <option value="Materiales de Construcción">Materiales de Construcción</option>
@@ -733,12 +956,20 @@ export default function Activities() {
             </div>
           </div>
 
-          {canEdit && <div className="apu-form-grid">
+          <div className="apu-form-grid">
             <label>
               {tipoSeccion === "material" ? "Seleccionar Material" :
-               tipoSeccion === "mano_obra" ? "Seleccionar Cargo / Mano de Obra" : "Seleccionar Equipo / Transporte"} ({recursosDisponibles.length} disponibles)
+                tipoSeccion === "mano_obra" ? "Seleccionar Cargo / Mano de Obra" : "Seleccionar Equipo / Transporte"} ({recursosDisponibles.length} disponibles)
               <select className="text-input" value={recursoId} onChange={(e) => setRecursoId(e.target.value)}>
-                <option value="">-- Seleccionar de la lista --</option>
+                <option value="">
+                  {resourcesLoading
+                    ? "Buscando recursos..."
+                    : recursosDisponibles.length
+                    ? "-- Seleccionar de la lista --"
+                    : busquedaRecursoAplicada
+                      ? "No se encontraron recursos"
+                      : "No hay recursos disponibles"}
+                </option>
                 {recursosDisponibles.map((r) => (
                   <option key={r.id} value={r.id}>
                     [{r.tipo.toUpperCase()}] {r.codigo} - {r.descripcion} ({r.unidad}) — C$ {Number(r.costoUnitario || 0).toFixed(2)}
@@ -748,7 +979,7 @@ export default function Activities() {
             </label>
             <label>
               {tipoSeccion === "material" ? "Cantidad por unidad" :
-               tipoSeccion === "mano_obra" ? "HH por unidad de actividad" : "HM por unidad de actividad / viajes"}
+                tipoSeccion === "mano_obra" ? "HH por unidad de actividad" : "HM por unidad de actividad / viajes"}
               <input
                 className="text-input"
                 type="number"
@@ -758,10 +989,14 @@ export default function Activities() {
                 onChange={(e) => setCantidad(e.target.value)}
               />
             </label>
-            <button className="primary-button add-apu-btn" onClick={() => void addApuItem()}>
-              <Plus size={16} /> Agregar a la partida
+            <button
+              className="primary-button add-apu-btn"
+              onClick={() => void addApuItem()}
+              disabled={savingApuItem || !recursoId}
+            >
+              <Plus size={16} /> {savingApuItem ? "Agregando..." : "Agregar a la partida"}
             </button>
-          </div>}
+          </div>
 
           {mensaje && <div className="import-success">{mensaje}</div>}
           {error && <div className="import-error">{error}</div>}
@@ -778,7 +1013,7 @@ export default function Activities() {
                   <th>Cant. / Unidad de actividad</th>
                   <th>Precio Unitario</th>
                   <th>Subtotal</th>
-                  {canEdit && <th></th>}
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -800,12 +1035,12 @@ export default function Activities() {
                         <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
                           <Trash2 size={16} />
                         </button>
-                      </td>}
+                      </td>
                     </tr>
                   );
                 })}
                 {!detallesMateriales.length && (
-                  <tr><td colSpan={canEdit ? 7 : 6}>No hay materiales agregados en este APU.</td></tr>
+                  <tr><td colSpan={7}>No hay materiales agregados en este APU.</td></tr>
                 )}
               </tbody>
             </table>
@@ -823,7 +1058,7 @@ export default function Activities() {
                   <th>Horas-Hombre (HH) / unidad</th>
                   <th>Salario x Hora</th>
                   <th>Monto Total</th>
-                  {canEdit && <th></th>}
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -845,12 +1080,12 @@ export default function Activities() {
                         <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
                           <Trash2 size={16} />
                         </button>
-                      </td>}
+                      </td>
                     </tr>
                   );
                 })}
                 {!detallesManoDeObra.length && (
-                  <tr><td colSpan={canEdit ? 7 : 6}>No hay mano de obra agregada en este APU.</td></tr>
+                  <tr><td colSpan={7}>No hay mano de obra agregada en este APU.</td></tr>
                 )}
               </tbody>
             </table>
@@ -868,7 +1103,7 @@ export default function Activities() {
                   <th>Horas-Máquina (HM) / unidad o viajes</th>
                   <th>Renta Horaria</th>
                   <th>Monto Total</th>
-                  {canEdit && <th></th>}
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -890,12 +1125,12 @@ export default function Activities() {
                         <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
                           <Trash2 size={16} />
                         </button>
-                      </td>}
+                      </td>
                     </tr>
                   );
                 })}
                 {!detallesEquiposTransporte.length && (
-                  <tr><td colSpan={canEdit ? 7 : 6}>No hay equipos ni transporte agregados en este APU.</td></tr>
+                  <tr><td colSpan={7}>No hay equipos ni transporte agregados en este APU.</td></tr>
                 )}
               </tbody>
             </table>
