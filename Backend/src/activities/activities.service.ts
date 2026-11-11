@@ -14,10 +14,7 @@ import { CreateActivityDto } from './dto/create-activity.dto.js';
 import { QueryActivityDto } from './dto/query-activity.dto.js';
 import { UpdateActivityDto } from './dto/update-activity.dto.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import {
-  crearApuAutomaticoEnTransaccion,
-  sincronizarPresupuestosApu,
-} from '../apus/apu-automatico.js';
+import { crearApuAutomaticoEnTransaccion } from '../apus/apu-automatico.js';
 
 @Injectable()
 export class ActivitiesService implements OnModuleInit {
@@ -152,8 +149,13 @@ export class ActivitiesService implements OnModuleInit {
           : undefined,
         take: 1,
         select: {
+          id: true,
+          presupuestoId: true,
+          cantidadProyecto: true,
           presupuesto: {
             select: {
+              id: true,
+              nombre: true,
               proyecto: {
                 select: { id: true, nombre: true },
               },

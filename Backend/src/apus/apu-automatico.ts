@@ -1,10 +1,6 @@
 import { InternalServerErrorException } from '@nestjs/common';
 import { Prisma, TipoRecurso } from '@prisma/client';
-import {
-  calcularApu,
-  calcularResumenPresupuesto,
-  calcularTotalesLinea,
-} from '../calculos/calculos.js';
+import { calcularApu } from '../calculos/calculos.js';
 
 export interface RecursoApuAutomatico {
   id: string;
@@ -500,91 +496,6 @@ export async function recalcularCacheApu(
     update: { ...costoCalculado, fechaCalculo },
     create: { actividadId, ...costoCalculado, fechaCalculo },
   });
-}
-
-export async function sincronizarPresupuestosApu(
-  tx: Prisma.TransactionClient,
-  actividadId: string,
-  cache: Awaited<ReturnType<typeof recalcularCacheApu>>,
-) {
-  const items = await tx.presupuestoItem.findMany({
-    where: { actividadId },
-    select: { id: true, presupuestoId: true },
-  });
-  const presupuestoIds = [...new Set(items.map((item) => item.presupuestoId))];
-
-  for (const presupuestoId of presupuestoIds) {
-    const itemsPresupuesto = await tx.presupuestoItem.findMany({
-      where: { presupuestoId },
-    });
-
-    for (const item of itemsPresupuesto) {
-      const costosActualizados =
-        item.actividadId === actividadId
-          ? {
-              costoUnitarioCongelado: cache.costoTotal,
-              costoMaterialesCong: cache.costoMateriales,
-              costoManoObraCong: cache.costoManoObra,
-              costoEquipoCong: cache.costoEquipo,
-              costoTransporteCong: cache.costoTransporte,
-            }
-          : {
-              costoUnitarioCongelado: item.costoUnitarioCongelado,
-              costoMaterialesCong: item.costoMaterialesCong,
-              costoManoObraCong: item.costoManoObraCong,
-              costoEquipoCong: item.costoEquipoCong,
-              costoTransporteCong: item.costoTransporteCong,
-            };
-
-      const totales = calcularTotalesLinea({
-        cantidadProyecto: item.cantidadProyecto,
-        costoUnitarioCongelado: costosActualizados.costoUnitarioCongelado,
-        costoMaterialesCong: costosActualizados.costoMaterialesCong,
-        costoManoObraCong: costosActualizados.costoManoObraCong,
-        costoEquipoCong: costosActualizados.costoEquipoCong,
-        costoTransporteCong: costosActualizados.costoTransporteCong,
-        total: item.actividadId === actividadId
-          ? costosActualizados.costoMaterialesCong
-              .add(costosActualizados.costoManoObraCong)
-              .add(costosActualizados.costoEquipoCong)
-              .add(costosActualizados.costoTransporteCong)
-          : item.total,
-      });
-
-      await tx.presupuestoItem.update({
-        where: { id: item.id },
-        data: { ...costosActualizados, total: totales.sumaTotal },
-      });
-    }
-
-    const presupuesto = await tx.presupuesto.findUnique({
-      where: { id: presupuestoId },
-      select: {
-        pctIndirectos: true,
-        pctAdministracion: true,
-        pctUtilidad: true,
-        pctImpuestos: true,
-        pctImprevistos: true,
-      },
-    });
-    if (!presupuesto) continue;
-
-    const lineasActualizadas = await tx.presupuestoItem.findMany({
-      where: { presupuestoId },
-    });
-    const resumen = calcularResumenPresupuesto(lineasActualizadas, {
-      pctIndirectos: presupuesto.pctIndirectos,
-      pctAdministracion: presupuesto.pctAdministracion,
-      pctUtilidad: presupuesto.pctUtilidad,
-      pctImpuestos: presupuesto.pctImpuestos,
-      pctImprevistos: presupuesto.pctImprevistos,
-    });
-
-    await tx.presupuesto.update({
-      where: { id: presupuestoId },
-      data: resumen,
-    });
-  }
 }
 
 export async function crearApuAutomaticoEnTransaccion(

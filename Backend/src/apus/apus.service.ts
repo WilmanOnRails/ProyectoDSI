@@ -7,14 +7,56 @@ import { Prisma, TipoRecurso } from '@prisma/client';
 import {
   crearApuAutomaticoEnTransaccion,
   recalcularCacheApu,
-  sincronizarPresupuestosApu,
 } from './apu-automatico.js';
-import { calcularApu } from '../calculos/calculos.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateApusDto } from './dto/create-apus.dto.js';
 import { UpdateApusDto } from './dto/update-apus.dto.js';
 
 const APU_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 30_000 };
+const APU_SNAPSHOT_SELECT = {
+  id: true,
+  codigo: true,
+  nombre: true,
+  unidad: true,
+  capituloCodigo: true,
+  capituloNombre: true,
+  apuDetalles: {
+    select: {
+      id: true,
+      recursoId: true,
+      cantidadPorUnidad: true,
+      recurso: {
+        select: {
+          id: true,
+          codigo: true,
+          tipo: true,
+          categoria: true,
+          descripcion: true,
+          unidad: true,
+          costoUnitario: true,
+        },
+      },
+    },
+  },
+  apuCostoCache: {
+    select: {
+      costoMateriales: true,
+      costoManoObra: true,
+      costoEquipo: true,
+      costoTransporte: true,
+      costoTotal: true,
+    },
+  },
+} satisfies Prisma.ActividadSelect;
+const APU_RESOURCE_SELECT = {
+  id: true,
+  codigo: true,
+  tipo: true,
+  categoria: true,
+  descripcion: true,
+  unidad: true,
+  costoUnitario: true,
+} satisfies Prisma.RecursoSelect;
 
 @Injectable()
 export class ApusService {
@@ -23,15 +65,35 @@ export class ApusService {
   async create(createApusDto: CreateApusDto) {
     const { actividadId, recursoId, cantidadPorUnidad } = createApusDto;
 
-    await this.verificarActividadYRecurso(actividadId, recursoId);
     this.validarCantidadMinima(cantidadPorUnidad);
 
     return this.prisma.$transaction(
       async (tx) => {
-        const recurso = await tx.recurso.findUniqueOrThrow({
-          where: { id: recursoId },
-          select: { tipo: true },
-        });
+        const [actividad, recurso] = await Promise.all([
+          tx.actividad.findUnique({
+            where: { id: actividadId },
+            select: { id: true },
+          }),
+          tx.recurso.findUnique({
+            where: { id: recursoId },
+            select: { id: true, tipo: true, activo: true, codigo: true },
+          }),
+        ]);
+        if (!actividad) {
+          throw new NotFoundException(
+            `Actividad con ID ${actividadId} no encontrada`,
+          );
+        }
+        if (!recurso) {
+          throw new NotFoundException(
+            `Recurso con ID ${recursoId} no encontrado`,
+          );
+        }
+        if (!recurso.activo) {
+          throw new BadRequestException(
+            `El recurso ${recurso.codigo} está inactivo y no se puede usar en un APU`,
+          );
+        }
         const detalleExistente =
           recurso.tipo === TipoRecurso.material
             ? await tx.apuDetalle.findFirst({
@@ -44,16 +106,16 @@ export class ApusService {
               data: {
                 cantidadPorUnidad: { increment: cantidadPorUnidad },
               },
-              include: { recurso: true, actividad: true },
+              include: { recurso: { select: APU_RESOURCE_SELECT } },
             })
-          : await tx.apuDetalle.create({
-              data: { actividadId, recursoId, cantidadPorUnidad },
-              include: { recurso: true, actividad: true },
-            });
+            : await tx.apuDetalle.create({
+                data: { actividadId, recursoId, cantidadPorUnidad },
+                include: { recurso: { select: APU_RESOURCE_SELECT } },
+              });
 
-        await this.recalcularCache(tx, actividadId);
+        const apuCostoCache = await recalcularCacheApu(tx, actividadId);
 
-        return detalle;
+        return { ...detalle, apuCostoCache };
       },
       APU_TRANSACTION_OPTIONS,
     );
@@ -81,22 +143,23 @@ export class ApusService {
 
   /** Obtiene la receta completa de una actividad junto con su costo en caché. */
   async obtenerApuPorActividad(actividadId: string) {
-    await this.generarApuSiHaceFalta(actividadId);
-
-    const actividad = await this.prisma.actividad.findUnique({
+    let actividad = await this.prisma.actividad.findUnique({
       where: { id: actividadId },
-      include: {
-        apuDetalles: {
-          include: { recurso: true },
-        },
-        apuCostoCache: true,
-      },
+      select: APU_SNAPSHOT_SELECT,
     });
 
     if (!actividad) {
       throw new NotFoundException(
         `Actividad con ID ${actividadId} no encontrada`,
       );
+    }
+
+    if (actividad.apuDetalles.length === 0) {
+      await this.generarApuSiHaceFalta(actividadId);
+      actividad = await this.prisma.actividad.findUnique({
+        where: { id: actividadId },
+        select: APU_SNAPSHOT_SELECT,
+      });
     }
 
     return actividad;
@@ -136,16 +199,11 @@ export class ApusService {
             costoUnitario: true,
           },
         });
-        const resultado = await crearApuAutomaticoEnTransaccion(
+        await crearApuAutomaticoEnTransaccion(
           tx,
           actividad,
           recursos,
           actividad.presupuestoItems[0]?.cantidadProyecto ?? 1,
-        );
-        await sincronizarPresupuestosApu(
-          tx,
-          actividadId,
-          resultado.cache,
         );
       },
       { timeout: 30000, maxWait: 10000 },
@@ -165,12 +223,15 @@ export class ApusService {
           const actualizado = await tx.apuDetalle.update({
             where: { id },
             data: updateApusDto,
-            include: { recurso: true, actividad: true },
+            include: { recurso: { select: APU_RESOURCE_SELECT } },
           });
 
-          await this.recalcularCache(tx, actual.actividadId);
+          const apuCostoCache = await recalcularCacheApu(
+            tx,
+            actual.actividadId,
+          );
 
-          return actualizado;
+          return { ...actualizado, apuCostoCache };
         },
         APU_TRANSACTION_OPTIONS,
       );
@@ -182,42 +243,21 @@ export class ApusService {
   async remove(id: string) {
     const actual = await this.findOne(id);
 
-    return await this.prisma.$transaction(
+    return this.prisma.$transaction(
       async (tx) => {
         const eliminado = await tx.apuDetalle.delete({
           where: { id },
         });
 
-        await this.recalcularCache(tx, actual.actividadId);
+        const apuCostoCache = await recalcularCacheApu(
+          tx,
+          actual.actividadId,
+        );
 
-        return eliminado;
+        return { ...eliminado, apuCostoCache };
       },
       APU_TRANSACTION_OPTIONS,
     );
-  }
-
-  private async verificarActividadYRecurso(
-    actividadId: string,
-    recursoId: string,
-  ) {
-    const [actividad, recurso] = await Promise.all([
-      this.prisma.actividad.findUnique({ where: { id: actividadId } }),
-      this.prisma.recurso.findUnique({ where: { id: recursoId } }),
-    ]);
-
-    if (!actividad) {
-      throw new NotFoundException(
-        `Actividad con ID ${actividadId} no encontrada`,
-      );
-    }
-    if (!recurso) {
-      throw new NotFoundException(`Recurso con ID ${recursoId} no encontrado`);
-    }
-    if (!recurso.activo) {
-      throw new BadRequestException(
-        `El recurso ${recurso.codigo} está inactivo y no se puede usar en un APU`,
-      );
-    }
   }
 
   private validarCantidadMinima(cantidad: number) {
@@ -226,52 +266,6 @@ export class ApusService {
         'La cantidad por unidad de actividad debe ser como mínimo 1.',
       );
     }
-  }
-
-  private async recalcularCache(
-    tx: Prisma.TransactionClient,
-    actividadId: string,
-  ) {
-    const cache = await recalcularCacheApu(tx, actividadId);
-    await sincronizarPresupuestosApu(tx, actividadId, cache);
-    const receta = await tx.apuDetalle.findMany({
-      where: { actividadId },
-      include: { recurso: { select: { tipo: true, costoUnitario: true } } },
-    });
-
-    const preciosMap: Record<string, Prisma.Decimal> = {};
-    const detallesCalculo = receta.map((det) => {
-      preciosMap[det.recursoId] = det.recurso.costoUnitario;
-      return {
-        recursoId: det.recursoId,
-        tipo: det.recurso.tipo,
-        cantidadPorUnidad: det.cantidadPorUnidad,
-      };
-    });
-
-    const costoCalculado = calcularApu(detallesCalculo, preciosMap);
-
-    await tx.apuCostoCache.upsert({
-      where: { actividadId },
-      update: {
-        costoMateriales: costoCalculado.costoMateriales,
-        costoManoObra: costoCalculado.costoManoObra,
-        costoEquipo: costoCalculado.costoEquipo,
-        costoTransporte: costoCalculado.costoTransporte,
-        costoTotal: costoCalculado.costoTotal,
-        fechaCalculo: new Date(),
-      },
-      create: {
-        actividadId,
-        costoMateriales: costoCalculado.costoMateriales,
-        costoManoObra: costoCalculado.costoManoObra,
-        costoEquipo: costoCalculado.costoEquipo,
-        costoTransporte: costoCalculado.costoTransporte,
-        costoTotal: costoCalculado.costoTotal,
-        fechaCalculo: new Date(),
-      },
-    });
-
   }
 
 }
