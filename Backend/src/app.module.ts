@@ -16,9 +16,15 @@ import { ImportacionesModule } from './importaciones/importaciones.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { AccessControlModule } from './auth/access-control.module.js';
 import * as path from 'path';
+import { join } from 'path';
+import { ServeStaticModule } from '@nestjs/serve-static';
 
 @Module({
   imports: [
+    ServeStaticModule.forRoot({
+      rootPath: join(__dirname, '..', 'public'), // Apunta a /app/public dentro del contenedor
+      serveRoot: '/', // Se sirve en la raíz del sitio
+    }),
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: path.resolve(process.cwd(), '.env'),
