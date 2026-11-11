@@ -132,7 +132,7 @@ export default function Login() {
                         <Building2 size={24} strokeWidth={1.8} />
                     </span>
                     <span className="login-brand-name">
-                        <strong>ProyectoDSI</strong>
+                        <strong>Presupuesto Fácil</strong>
                         <small>GESTIÓN DE OBRAS</small>
                     </span>
                 </div>
