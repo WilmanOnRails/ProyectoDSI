@@ -26,8 +26,8 @@ const __dirname = dirname(__filename);
 @Module({
   imports: [
     ServeStaticModule.forRoot({
-      rootPath: join(__dirname, '..', 'public'), // Apunta a /app/public dentro del contenedor
-      serveRoot: '/', // Se sirve en la raíz del sitio
+      rootPath: join(__dirname, '../../public'),
+      serveRoot: '/',
     }),
     ConfigModule.forRoot({
       isGlobal: true,
