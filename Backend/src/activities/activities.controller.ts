@@ -1,5 +1,6 @@
 import {
   Controller,
+  ParseUUIDPipe,
   Get,
   Post,
   Body,
@@ -32,7 +33,7 @@ export class ActivitiesController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.activitiesService.findOne(id);
   }
 
@@ -46,5 +47,13 @@ export class ActivitiesController {
   @UseGuards(JwtAuthGuard, WriteAccessGuard)
   remove(@Param('id') id: string) {
     return this.activitiesService.remove(id);
+  }
+
+  @Delete(':id/presupuesto-items/:itemId')
+  removeFromPresupuesto(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+  ) {
+    return this.activitiesService.removeFromPresupuesto(id, itemId);
   }
 }

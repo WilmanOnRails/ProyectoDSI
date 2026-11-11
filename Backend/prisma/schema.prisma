@@ -65,7 +65,6 @@ model ApuDetalle {
   actividad         Actividad @relation(fields: [actividadId], references: [id], onDelete: Cascade)
   recurso           Recurso   @relation(fields: [recursoId], references: [id])
 
-  @@unique([actividadId, recursoId])
   @@index([recursoId])
   @@map("apu_detalle")
 }

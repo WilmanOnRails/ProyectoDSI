@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from "react";
-import { Plus, Trash2, Search, Filter, FolderKanban } from "lucide-react";
+import { Pencil, Plus, Trash2, Search, Filter, FolderKanban } from "lucide-react";
 import api, { apiGet } from "../services/api";
 import HorizontalTable from "../components/HorizontalTable";
 import { canManagePlatformData } from "../services/authSession";
@@ -12,7 +12,12 @@ type Activity = {
   capituloCodigo?: string;
   capituloNombre?: string;
   presupuestoItems?: Array<{
+    id: string;
+    presupuestoId: string;
+    cantidadProyecto: string | number;
     presupuesto?: {
+      id: string;
+      nombre?: string;
       proyecto?: {
         id: string;
         nombre: string;
@@ -21,19 +26,37 @@ type Activity = {
   }>;
 };
 
-type ActivityPage = {
-  items: Activity[];
-  total: number;
-  pagina: number;
-  limite: number;
-};
-
 type ProjectOption = {
   id: string;
   nombre: string;
 };
 
-type Proyecto = ProjectOption;
+type BudgetOption = {
+  id: string;
+  nombre?: string;
+  proyectoId: string;
+  proyecto?: ProjectOption;
+};
+
+type ActivityForm = {
+  nombre: string;
+  unidad: string;
+  capituloCodigo: string;
+  capituloNombre: string;
+  proyectoId: string;
+  presupuestoId: string;
+  cantidadProyecto: string;
+};
+
+const EMPTY_ACTIVITY_FORM: ActivityForm = {
+  nombre: "",
+  unidad: "",
+  capituloCodigo: "",
+  capituloNombre: "",
+  proyectoId: "",
+  presupuestoId: "",
+  cantidadProyecto: "",
+};
 
 type Resource = {
   id: string;
@@ -72,11 +95,8 @@ const PAGE_SIZE = 50;
 export default function Activities() {
   const canEdit = canManagePlatformData();
   const [items, setItems] = useState<Activity[]>([]);
-  const [totalActivities, setTotalActivities] = useState(0);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
-  const [page, setPage] = useState(1);
-  const [loadedActivityQuery, setLoadedActivityQuery] = useState<string | null>(null);
-  const [reloadCounter, setReloadCounter] = useState(0);
+  const [budgets, setBudgets] = useState<BudgetOption[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
   const [selected, setSelected] = useState<ActivityApuData | null>(null);
   const [recursoId, setRecursoId] = useState("");
@@ -86,6 +106,15 @@ export default function Activities() {
   const [mensaje, setMensaje] = useState("");
   const [scrollToApu, setScrollToApu] = useState(false);
   const apuDetailRef = useRef<HTMLElement>(null);
+  const [detalleEditando, setDetalleEditando] = useState<ApuDetalle | null>(null);
+  const [cantidadEditada, setCantidadEditada] = useState("");
+  const [precioEditado, setPrecioEditado] = useState("");
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false);
+  const [activityModalOpen, setActivityModalOpen] = useState(false);
+  const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
+  const [editingBudgetItemId, setEditingBudgetItemId] = useState<string | null>(null);
+  const [activityForm, setActivityForm] = useState<ActivityForm>(EMPTY_ACTIVITY_FORM);
+  const [savingActivity, setSavingActivity] = useState(false);
 
   const [proyectoFiltro, setProyectoFiltro] = useState<string>("ALL");
   const [busquedaRecurso, setBusquedaRecurso] = useState("");
@@ -124,67 +153,63 @@ export default function Activities() {
         if (active) setLoadedActivityQuery(activityQueryKey);
       });
 
-    return () => {
-      active = false;
-    };
-  }, [page, proyectoFiltro, reloadCounter, activityQueryKey]);
+  const loadProjectsAndBudgets = () => {
+    Promise.all([
+      api.get<ProjectOption[]>("/projects"),
+      api.get<BudgetOption[]>("/presupuestos"),
+    ])
+      .then(([projectResponse, budgetResponse]) => {
+        setProjects(projectResponse.data);
+        setBudgets(budgetResponse.data);
+      })
+      .catch(() => setError("No se pudieron cargar los proyectos y presupuestos."));
+  };
+
+  const loadResources = () => {
+    api
+      .get<Resource[]>("/recursos")
+      .then((r) => setResources(r.data))
+      .catch(() => {});
+  };
 
   useEffect(() => {
-    let active = true;
-    apiGet<Proyecto[]>("/projects")
-      .then((result) => {
-        if (active) setProjects(result.map(({ id, nombre }) => ({ id, nombre })));
-      })
-      .catch(() => {
-        if (active) setError("No se pudieron cargar los proyectos.");
-      });
-
-    return () => {
-      active = false;
-    };
+    loadActivities();
+    loadProjectsAndBudgets();
+    loadResources();
   }, []);
 
-  useEffect(() => {
-    const timer = window.setTimeout(
-      () => setResourceSearchApplied(busquedaRecurso.trim()),
-      250,
-    );
-    return () => window.clearTimeout(timer);
-  }, [busquedaRecurso]);
+  const presupuestosDelProyecto = useMemo(
+    () => budgets.filter((budget) => budget.proyectoId === activityForm.proyectoId),
+    [budgets, activityForm.proyectoId],
+  );
 
-  useEffect(() => {
-    if (!selectedActivityId) return;
-    let active = true;
-    const tipos =
-      tipoSeccion === "equipo_transporte"
-        ? ["equipo", "transporte"]
-        : [tipoSeccion];
-    const requests = tipos.map((tipo) =>
-      apiGet<Resource[]>("/recursos", {
-        activo: true,
-        tipo,
-        ...(categoriaFiltro !== "ALL" ? { categoria: categoriaFiltro } : {}),
-        ...(resourceSearchApplied ? { buscar: resourceSearchApplied } : {}),
-      }),
-    );
+  const capitulosDelProyecto = useMemo(() => {
+    const chapters = new Map<string, { codigo: string; nombre: string }>();
+    for (const activity of items) {
+      const perteneceAlProyecto = activity.presupuestoItems?.some(
+        (item) => item.presupuesto?.proyecto?.id === activityForm.proyectoId,
+      );
+      if (perteneceAlProyecto && activity.capituloCodigo && activity.capituloNombre) {
+        chapters.set(activity.capituloCodigo, {
+          codigo: activity.capituloCodigo,
+          nombre: activity.capituloNombre,
+        });
+      }
+    }
 
-    Promise.all(requests)
-      .then((results) => {
-        if (active) setResources(results.flat());
-      })
-      .catch(() => {
-        if (active) setError("No se pudieron cargar los recursos para el APU.");
+    if (activityForm.capituloCodigo && activityForm.capituloNombre) {
+      chapters.set(activityForm.capituloCodigo, {
+        codigo: activityForm.capituloCodigo,
+        nombre: activityForm.capituloNombre,
       });
-
-    return () => {
-      active = false;
-    };
-  }, [selectedActivityId, tipoSeccion, categoriaFiltro, resourceSearchApplied]);
-
-  const reloadActivities = () => {
-    setReloadCounter((current) => current + 1);
-    setError("");
-  };
+    }
+    if (chapters.size === 0) {
+      chapters.set("GEN", { codigo: "GEN", nombre: "General" });
+    }
+    return Array.from(chapters.values()).sort((a, b) =>
+      a.codigo.localeCompare(b.codigo, "es"),
+    );
+  }, [items, activityForm.proyectoId, activityForm.capituloCodigo, activityForm.capituloNombre]);
 
   const openApu = async (id: string, shouldScroll = false) => {
     try {
@@ -238,6 +263,243 @@ export default function Activities() {
     }
   };
 
+  const abrirNuevaActividad = () => {
+    setEditingActivityId(null);
+    setEditingBudgetItemId(null);
+    setActivityForm(EMPTY_ACTIVITY_FORM);
+    setError("");
+    setMensaje("");
+    setActivityModalOpen(true);
+  };
+
+  const abrirEdicionActividad = (activity: Activity) => {
+    const budgetItem =
+      activity.presupuestoItems?.find(
+        (item) =>
+          proyectoFiltro !== "ALL" &&
+          item.presupuesto?.proyecto?.id === proyectoFiltro,
+      ) ?? activity.presupuestoItems?.[0];
+    if (!budgetItem) {
+      setError("Esta actividad no está asociada a un presupuesto de proyecto.");
+      return;
+    }
+
+    setEditingActivityId(activity.id);
+    setEditingBudgetItemId(budgetItem.id);
+    setActivityForm({
+      nombre: activity.nombre,
+      unidad: activity.unidad,
+      capituloCodigo: activity.capituloCodigo ?? "",
+      capituloNombre: activity.capituloNombre ?? "",
+      proyectoId: budgetItem.presupuesto?.proyecto?.id ?? "",
+      presupuestoId: budgetItem.presupuesto?.id ?? budgetItem.presupuestoId,
+      cantidadProyecto: String(budgetItem.cantidadProyecto),
+    });
+    setError("");
+    setMensaje("");
+    setActivityModalOpen(true);
+  };
+
+  const guardarActividad = async () => {
+    if (savingActivity) return;
+    const cantidadProyecto = Number(activityForm.cantidadProyecto);
+    const cantidadValida =
+      Number.isFinite(cantidadProyecto) &&
+      cantidadProyecto > 0 &&
+      (activityForm.cantidadProyecto.split(".")[1]?.length ?? 0) <= 2;
+    const formularioCompleto =
+      activityForm.nombre.trim() &&
+      activityForm.unidad.trim() &&
+      activityForm.capituloCodigo &&
+      activityForm.capituloNombre &&
+      activityForm.proyectoId &&
+      activityForm.presupuestoId &&
+      cantidadValida;
+
+    if (!formularioCompleto) {
+      setError("Completa todos los campos con datos válidos antes de guardar.");
+      return;
+    }
+
+    setSavingActivity(true);
+    setError("");
+    try {
+      if (editingActivityId && editingBudgetItemId) {
+        await api.patch(`/activities/${editingActivityId}`, {
+          nombre: activityForm.nombre.trim(),
+          unidad: activityForm.unidad.trim(),
+          capituloCodigo: activityForm.capituloCodigo,
+          capituloNombre: activityForm.capituloNombre,
+          presupuestoItemId: editingBudgetItemId,
+          cantidadProyecto,
+        });
+      } else {
+        await api.post("/activities", {
+          nombre: activityForm.nombre.trim(),
+          unidad: activityForm.unidad.trim(),
+          capituloCodigo: activityForm.capituloCodigo,
+          capituloNombre: activityForm.capituloNombre,
+          proyectoId: activityForm.proyectoId,
+          presupuestoId: activityForm.presupuestoId,
+          cantidadProyecto,
+        });
+      }
+
+      const [activityResponse, budgetResponse] = await Promise.all([
+        api.get<Activity[]>("/activities"),
+        api.get<BudgetOption[]>("/presupuestos"),
+      ]);
+      setItems(activityResponse.data);
+      setBudgets(budgetResponse.data);
+      setMensaje(
+        editingActivityId
+          ? "Actividad actualizada correctamente."
+          : "Actividad agregada al proyecto y presupuesto. Su código y APU se generaron automáticamente.",
+      );
+      setActivityModalOpen(false);
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.message || "No se pudo guardar la actividad.",
+      );
+    } finally {
+      setSavingActivity(false);
+    }
+  };
+
+  const eliminarActividadDelProyecto = async (activity: Activity) => {
+    const budgetItem =
+      activity.presupuestoItems?.find(
+        (item) =>
+          proyectoFiltro !== "ALL" &&
+          item.presupuesto?.proyecto?.id === proyectoFiltro,
+      ) ?? activity.presupuestoItems?.[0];
+    if (!budgetItem) {
+      setError("Esta actividad no está asociada a un presupuesto de proyecto.");
+      return;
+    }
+    if (
+      !window.confirm(
+        "¿Quieres quitar esta actividad del proyecto y su presupuesto? Si no está en otros presupuestos, también se eliminará del catálogo.",
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await api.delete(
+        `/activities/${activity.id}/presupuesto-items/${budgetItem.id}`,
+      );
+      if (selected?.id === activity.id) setSelected(null);
+      const [activityResponse, budgetResponse] = await Promise.all([
+        api.get<Activity[]>("/activities"),
+        api.get<BudgetOption[]>("/presupuestos"),
+      ]);
+      setItems(activityResponse.data);
+      setBudgets(budgetResponse.data);
+      setMensaje("Actividad quitada del proyecto y presupuesto.");
+      setError("");
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.message || "No se pudo eliminar la actividad.",
+      );
+    }
+  };
+
+  const iniciarEdicion = (detalle: ApuDetalle) => {
+    setDetalleEditando(detalle);
+    setCantidadEditada(String(detalle.cantidadPorUnidad));
+    setPrecioEditado(String(detalle.recurso.costoUnitario));
+    setError("");
+    setMensaje("");
+  };
+
+  const guardarEdicion = async () => {
+    if (!detalleEditando || !selected || guardandoEdicion) return;
+
+    const cantidadNueva = Number(cantidadEditada);
+    const precioNuevo = Number(precioEditado);
+    const decimalesCantidad = cantidadEditada.split(".")[1]?.length ?? 0;
+    const decimalesPrecio = precioEditado.split(".")[1]?.length ?? 0;
+
+    if (
+      !Number.isFinite(cantidadNueva) ||
+      cantidadNueva < 1 ||
+      decimalesCantidad > 4
+    ) {
+      setError("La cantidad por unidad debe ser al menos 1 y tener máximo 4 decimales.");
+      return;
+    }
+    if (
+      !Number.isFinite(precioNuevo) ||
+      precioNuevo < 0 ||
+      decimalesPrecio > 2
+    ) {
+      setError("El precio debe ser mayor o igual a 0 y tener máximo 2 decimales.");
+      return;
+    }
+
+    setGuardandoEdicion(true);
+    setError("");
+    try {
+      const precioAnterior = Number(detalleEditando.recurso.costoUnitario);
+      const cantidadAnterior = Number(detalleEditando.cantidadPorUnidad);
+
+      if (precioNuevo !== precioAnterior) {
+        await api.patch(`/recursos/${detalleEditando.recurso.id}/precio`, {
+          precio: precioNuevo,
+          fuente: "Edición desde APU",
+        });
+        setResources((current) =>
+          current.map((resource) =>
+            resource.id === detalleEditando.recurso.id
+              ? { ...resource, costoUnitario: precioNuevo }
+              : resource,
+          ),
+        );
+      }
+
+      if (cantidadNueva !== cantidadAnterior) {
+        await api.patch(`/apus/${detalleEditando.id}`, {
+          cantidadPorUnidad: cantidadNueva,
+        });
+      }
+
+      const actualizado = await api.get<ActivityApuData>(
+        `/apus/actividad/${selected.id}`,
+      );
+      setSelected(actualizado.data);
+      setMensaje("Precio y cantidad del recurso actualizados correctamente.");
+      setDetalleEditando(null);
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.message ||
+          "No se pudo completar la edición. Si se cambió el precio, verifica el catálogo de recursos.",
+      );
+    } finally {
+      setGuardandoEdicion(false);
+    }
+  };
+
+  const proyectosMap = useMemo(() => {
+    const map = new Map<string, string>();
+    items.forEach((act) => {
+      act.presupuestoItems?.forEach((pi) => {
+        const p = pi.presupuesto?.proyecto;
+        if (p) {
+          map.set(p.id, p.nombre);
+        }
+      });
+    });
+    return Array.from(map.entries()).map(([id, nombre]) => ({ id, nombre }));
+  }, [items]);
+
+  const actividadesFiltradas = useMemo(() => {
+    if (proyectoFiltro === "ALL") return items;
+    return items.filter((act) =>
+      act.presupuestoItems?.some((pi) => pi.presupuesto?.proyecto?.id === proyectoFiltro)
+    );
+  }, [items, proyectoFiltro]);
+
   // Recursos filtrados según la sección activa (Materiales, Mano de Obra, Equipos/Transporte)
   const recursosDisponibles = useMemo(() => {
     return resources.filter((r) => {
@@ -284,22 +546,29 @@ export default function Activities() {
             <h2>Actividades registradas ({totalActivities})</h2>
             <p>{error || mensaje || (canEdit ? "Seleccioná una actividad para configurar sus costos unitarios." : "Seleccioná una actividad para consultar sus costos unitarios.")}</p>
           </div>
-          <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-            <FolderKanban size={18} color="#64748b" />
-            <select
-              className="text-input"
-              style={{ width: "240px", padding: "8px" }}
-              value={proyectoFiltro}
-              onChange={(e) => {
-                setProyectoFiltro(e.target.value);
-                setPage(1);
-              }}
+          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+            <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+              <FolderKanban size={18} color="#64748b" />
+              <select
+                className="text-input"
+                style={{ width: "240px", padding: "8px" }}
+                value={proyectoFiltro}
+                onChange={(e) => setProyectoFiltro(e.target.value)}
+              >
+                <option value="ALL">Todos los proyectos ({items.length})</option>
+                {proyectosMap.map((p) => (
+                  <option key={p.id} value={p.id}>{p.nombre}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              className="primary-button"
+              onClick={abrirNuevaActividad}
+              disabled={projects.length === 0}
+              title={projects.length === 0 ? "Primero crea un proyecto" : "Agregar actividad"}
             >
-              <option value="ALL">Todos los proyectos ({totalActivities})</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>{p.nombre}</option>
-              ))}
-            </select>
+              <Plus size={16} /> Agregar actividad
+            </button>
           </div>
         </div>
 
@@ -316,8 +585,14 @@ export default function Activities() {
               </tr>
             </thead>
             <tbody>
-              {items.map((x) => {
-                const nombreProyecto = x.presupuestoItems?.[0]?.presupuesto?.proyecto?.nombre || "Sin proyecto";
+              {actividadesFiltradas.map((x) => {
+                const itemProyecto =
+                  x.presupuestoItems?.find(
+                    (item) =>
+                      proyectoFiltro !== "ALL" &&
+                      item.presupuesto?.proyecto?.id === proyectoFiltro,
+                  ) ?? x.presupuestoItems?.[0];
+                const nombreProyecto = itemProyecto?.presupuesto?.proyecto?.nombre || "Sin proyecto";
                 const capitulo = x.capituloNombre || x.capituloCodigo || "General";
                 return (
                   <tr key={x.id}>
@@ -329,6 +604,22 @@ export default function Activities() {
                     <td>
                       <button className="text-link" onClick={() => void openApu(x.id, true)}>
                         {canEdit ? "Configurar APU" : "Ver APU"}
+                      </button>
+                      <button
+                        className="text-link"
+                        onClick={() => abrirEdicionActividad(x)}
+                        title="Editar actividad"
+                        style={{ marginLeft: "10px" }}
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        className="icon-btn-danger"
+                        onClick={() => void eliminarActividadDelProyecto(x)}
+                        title="Quitar actividad del proyecto"
+                        style={{ marginLeft: "8px" }}
+                      >
+                        <Trash2 size={15} />
                       </button>
                     </td>
                   </tr>
@@ -396,19 +687,19 @@ export default function Activities() {
               className={tipoSeccion === "material" ? "primary-button" : "secondary-button"}
               onClick={() => { setTipoSeccion("material"); setRecursoId(""); }}
             >
-              1. Materiales ({detallesMateriales.length})
+              1. Materiales
             </button>
             <button
               className={tipoSeccion === "mano_obra" ? "primary-button" : "secondary-button"}
               onClick={() => { setTipoSeccion("mano_obra"); setRecursoId(""); }}
             >
-              2. Mano de Obra ({detallesManoDeObra.length})
+              2. Mano de Obra
             </button>
             <button
               className={tipoSeccion === "equipo_transporte" ? "primary-button" : "secondary-button"}
               onClick={() => { setTipoSeccion("equipo_transporte"); setRecursoId(""); }}
             >
-              3. Equipos y Transporte ({detallesEquiposTransporte.length})
+              3. Equipos y Transporte
             </button>
           </div>
 
@@ -502,7 +793,10 @@ export default function Activities() {
                       <td>{det.cantidadPorUnidad}</td>
                       <td>{money(precio)}</td>
                       <td>{money(subtotal)}</td>
-                      {canEdit && <td>
+                      <td>
+                        <button className="text-link" onClick={() => iniciarEdicion(det)} title="Editar precio y cantidad">
+                          <Pencil size={15} />
+                        </button>
                         <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
                           <Trash2 size={16} />
                         </button>
@@ -544,7 +838,10 @@ export default function Activities() {
                       <td>{det.cantidadPorUnidad}</td>
                       <td>{money(salarioHora)}</td>
                       <td>{money(monto)}</td>
-                      {canEdit && <td>
+                      <td>
+                        <button className="text-link" onClick={() => iniciarEdicion(det)} title="Editar precio y horas">
+                          <Pencil size={15} />
+                        </button>
                         <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
                           <Trash2 size={16} />
                         </button>
@@ -586,7 +883,10 @@ export default function Activities() {
                       <td>{det.cantidadPorUnidad}</td>
                       <td>{money(renta)}</td>
                       <td>{money(monto)}</td>
-                      {canEdit && <td>
+                      <td>
+                        <button className="text-link" onClick={() => iniciarEdicion(det)} title="Editar precio y cantidad">
+                          <Pencil size={15} />
+                        </button>
                         <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
                           <Trash2 size={16} />
                         </button>
@@ -609,6 +909,257 @@ export default function Activities() {
             <p className="total-line">Costo Unitario Total (P.U.): <strong>{money(selected.apuCostoCache?.costoTotal || 0)}</strong></p>
           </div>
         </section>
+      )}
+
+      {detalleEditando && (
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <h3>Editar recurso del APU</h3>
+            <p>
+              {detalleEditando.recurso.codigo} — {detalleEditando.recurso.descripcion}.
+              El precio pertenece al catálogo y afecta otros APUs que usen este recurso.
+            </p>
+            <div style={{ display: "grid", gap: "12px" }}>
+              <label style={{ display: "grid", gap: "5px", fontSize: "12px", fontWeight: 600 }}>
+                {detalleEditando.recurso.tipo === "mano_obra"
+                  ? "Horas-Hombre (HH) / unidad"
+                  : detalleEditando.recurso.tipo === "material"
+                    ? "Cantidad / unidad"
+                    : "Horas-Máquina (HM) o viajes / unidad"}
+                <input
+                  className="text-input"
+                  type="number"
+                  min="1"
+                  step="0.0001"
+                  value={cantidadEditada}
+                  onChange={(event) => setCantidadEditada(event.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: "5px", fontSize: "12px", fontWeight: 600 }}>
+                Precio unitario vigente (C$)
+                <input
+                  className="text-input"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={precioEditado}
+                  onChange={(event) => setPrecioEditado(event.target.value)}
+                />
+              </label>
+            </div>
+            <div className="modal-actions" style={{ marginTop: "20px" }}>
+              <button
+                className="secondary-button"
+                onClick={() => setDetalleEditando(null)}
+                disabled={guardandoEdicion}
+              >
+                Cancelar
+              </button>
+              <button
+                className="primary-button"
+                onClick={() => void guardarEdicion()}
+                disabled={guardandoEdicion}
+              >
+                {guardandoEdicion ? "Guardando..." : "Guardar cambios"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activityModalOpen && (
+        <div className="modal-backdrop">
+          <div className="modal-card" style={{ maxWidth: "620px" }}>
+            <h3>{editingActivityId ? "Editar actividad" : "Agregar actividad"}</h3>
+            <p>
+              {editingActivityId
+                ? "Actualiza la descripción, unidad, capítulo y cantidad de esta actividad."
+                : "El código y el APU inicial se generan automáticamente. Completa todos los campos para agregarla al proyecto y su presupuesto."}
+            </p>
+            <div style={{ display: "grid", gap: "12px" }}>
+              {!editingActivityId && (
+                <div>
+                  <label style={{ display: "grid", gap: "5px", fontSize: "12px", fontWeight: 600 }}>
+                    Proyecto *
+                    <select
+                      className="text-input"
+                      required
+                      value={activityForm.proyectoId}
+                      onChange={(event) => {
+                        const proyectoId = event.target.value;
+                        const budgetsOfProject = budgets.filter(
+                          (budget) => budget.proyectoId === proyectoId,
+                        );
+                        setActivityForm((current) => ({
+                          ...current,
+                          proyectoId,
+                          presupuestoId:
+                            budgetsOfProject.length === 1
+                              ? budgetsOfProject[0].id
+                              : "",
+                          capituloCodigo: "",
+                          capituloNombre: "",
+                        }));
+                      }}
+                    >
+                      <option value="">-- Selecciona un proyecto --</option>
+                      {projects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {activityForm.proyectoId &&
+                    !presupuestosDelProyecto.length && (
+                      <p className="muted" style={{ marginTop: "6px" }}>
+                        Este proyecto aún no tiene presupuesto. Crea uno antes de agregarle actividades.
+                      </p>
+                    )}
+                </div>
+              )}
+
+              {editingActivityId ? (
+                <label style={{ display: "grid", gap: "5px", fontSize: "12px", fontWeight: 600 }}>
+                  Proyecto y presupuesto
+                  <input
+                    className="text-input"
+                    value={(() => {
+                      const budget = budgets.find(
+                        (option) => option.id === activityForm.presupuestoId,
+                      );
+                      return `${budget?.proyecto?.nombre ?? "Proyecto asociado"} — ${budget?.nombre ?? "Presupuesto"}`;
+                    })()}
+                    readOnly
+                  />
+                </label>
+              ) : (
+                <label style={{ display: "grid", gap: "5px", fontSize: "12px", fontWeight: 600 }}>
+                  Presupuesto *
+                  <select
+                    className="text-input"
+                    required
+                    value={activityForm.presupuestoId}
+                    onChange={(event) =>
+                      setActivityForm((current) => ({
+                        ...current,
+                        presupuestoId: event.target.value,
+                      }))
+                    }
+                    disabled={!activityForm.proyectoId || presupuestosDelProyecto.length === 0}
+                  >
+                    <option value="">-- Selecciona un presupuesto --</option>
+                    {presupuestosDelProyecto.map((budget) => (
+                      <option key={budget.id} value={budget.id}>
+                        {budget.nombre || "Presupuesto sin nombre"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <label style={{ display: "grid", gap: "5px", fontSize: "12px", fontWeight: 600 }}>
+                Capítulo *
+                <select
+                  className="text-input"
+                  required
+                  value={activityForm.capituloCodigo}
+                  onChange={(event) => {
+                    const chapter = capitulosDelProyecto.find(
+                      (option) => option.codigo === event.target.value,
+                    );
+                    setActivityForm((current) => ({
+                      ...current,
+                      capituloCodigo: chapter?.codigo ?? "",
+                      capituloNombre: chapter?.nombre ?? "",
+                    }));
+                  }}
+                  disabled={!editingActivityId && !activityForm.proyectoId}
+                >
+                  <option value="">-- Selecciona un capítulo --</option>
+                  {capitulosDelProyecto.map((chapter) => (
+                    <option key={chapter.codigo} value={chapter.codigo}>
+                      {chapter.codigo} — {chapter.nombre}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={{ display: "grid", gap: "5px", fontSize: "12px", fontWeight: 600 }}>
+                Descripción de la actividad *
+                <input
+                  className="text-input"
+                  required
+                  maxLength={300}
+                  value={activityForm.nombre}
+                  onChange={(event) =>
+                    setActivityForm((current) => ({
+                      ...current,
+                      nombre: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: "5px", fontSize: "12px", fontWeight: 600 }}>
+                Unidad de medida *
+                <input
+                  className="text-input"
+                  required
+                  maxLength={30}
+                  placeholder="m2, m3, ml, und..."
+                  value={activityForm.unidad}
+                  onChange={(event) =>
+                    setActivityForm((current) => ({
+                      ...current,
+                      unidad: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: "5px", fontSize: "12px", fontWeight: 600 }}>
+                Cantidad para el presupuesto *
+                <input
+                  className="text-input"
+                  type="number"
+                  required
+                  min="0.01"
+                  step="0.01"
+                  value={activityForm.cantidadProyecto}
+                  onChange={(event) =>
+                    setActivityForm((current) => ({
+                      ...current,
+                      cantidadProyecto: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+            </div>
+
+            {error && <div className="import-error" style={{ marginTop: "12px" }}>{error}</div>}
+            <div className="modal-actions" style={{ marginTop: "20px" }}>
+              <button
+                className="secondary-button"
+                onClick={() => setActivityModalOpen(false)}
+                disabled={savingActivity}
+              >
+                Cancelar
+              </button>
+              <button
+                className="primary-button"
+                onClick={() => void guardarActividad()}
+                disabled={savingActivity || projects.length === 0}
+              >
+                {savingActivity
+                  ? "Guardando..."
+                  : editingActivityId
+                    ? "Guardar cambios"
+                    : "Agregar actividad"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
