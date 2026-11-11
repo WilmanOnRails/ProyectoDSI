@@ -15,12 +15,13 @@ import { ScrapingModule } from './scraping/scraping.module.js';
 import { ImportacionesModule } from './importaciones/importaciones.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { AccessControlModule } from './auth/access-control.module.js';
+import * as path from 'path';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      envFilePath: path.resolve(process.cwd(), '.env'),
     }),
     PrismaModule,
     UsersModule,
