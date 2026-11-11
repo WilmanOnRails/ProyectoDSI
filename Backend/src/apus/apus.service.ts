@@ -8,6 +8,7 @@ import {
   recalcularCacheApu,
   sincronizarPresupuestosApu,
 } from './apu-automatico.js';
+import { calcularApu } from '../calculos/calculos.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateApusDto } from './dto/create-apus.dto.js';
 import { UpdateApusDto } from './dto/update-apus.dto.js';
@@ -16,7 +17,7 @@ const APU_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 30_000 };
 
 @Injectable()
 export class ApusService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async create(createApusDto: CreateApusDto) {
     const { actividadId, recursoId, cantidadPorUnidad } = createApusDto;
@@ -180,6 +181,44 @@ export class ApusService {
   ) {
     const cache = await recalcularCacheApu(tx, actividadId);
     await sincronizarPresupuestosApu(tx, actividadId, cache);
+    const receta = await tx.apuDetalle.findMany({
+      where: { actividadId },
+      include: { recurso: { select: { tipo: true, costoUnitario: true } } },
+    });
+
+    const preciosMap: Record<string, Prisma.Decimal> = {};
+    const detallesCalculo = receta.map((det) => {
+      preciosMap[det.recursoId] = det.recurso.costoUnitario;
+      return {
+        recursoId: det.recursoId,
+        tipo: det.recurso.tipo,
+        cantidadPorUnidad: det.cantidadPorUnidad,
+      };
+    });
+
+    const costoCalculado = calcularApu(detallesCalculo, preciosMap);
+
+    await tx.apuCostoCache.upsert({
+      where: { actividadId },
+      update: {
+        costoMateriales: costoCalculado.costoMateriales,
+        costoManoObra: costoCalculado.costoManoObra,
+        costoEquipo: costoCalculado.costoEquipo,
+        costoTransporte: costoCalculado.costoTransporte,
+        costoTotal: costoCalculado.costoTotal,
+        fechaCalculo: new Date(),
+      },
+      create: {
+        actividadId,
+        costoMateriales: costoCalculado.costoMateriales,
+        costoManoObra: costoCalculado.costoManoObra,
+        costoEquipo: costoCalculado.costoEquipo,
+        costoTransporte: costoCalculado.costoTransporte,
+        costoTotal: costoCalculado.costoTotal,
+        fechaCalculo: new Date(),
+      },
+    });
+
   }
 
 }
