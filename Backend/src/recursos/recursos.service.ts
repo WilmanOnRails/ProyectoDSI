@@ -263,7 +263,7 @@ export class RecursosService implements OnModuleInit {
         }
 
         return recursoActualizado;
-      });
+      }, { maxWait: 10_000, timeout: 30_000 });
     } catch (error) {
       throw this.traducirErrorPrisma(error);
     }
