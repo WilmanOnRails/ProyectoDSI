@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsNumber } from 'class-validator';
+import { IsNotEmpty, IsString, IsNumber, Min } from 'class-validator';
 
 export class CreateApusDto {
     @ApiProperty({ required: true, example: 'uuid-del-recurso-aqui', description: 'Id del recurso' })
@@ -14,6 +14,7 @@ export class CreateApusDto {
 
     @ApiProperty({ required: true, example: 10.5 })
     @IsNotEmpty()
-    @IsNumber()
+    @IsNumber({ maxDecimalPlaces: 4 })
+    @Min(1)
     cantidadPorUnidad: number;
 }

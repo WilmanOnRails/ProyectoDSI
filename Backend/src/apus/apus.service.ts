@@ -1,10 +1,9 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, TipoRecurso } from '@prisma/client';
 import {
   recalcularCacheApu,
   sincronizarPresupuestosApu,
@@ -12,6 +11,8 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateApusDto } from './dto/create-apus.dto.js';
 import { UpdateApusDto } from './dto/update-apus.dto.js';
+
+const APU_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 30_000 };
 
 @Injectable()
 export class ApusService {
@@ -23,28 +24,37 @@ export class ApusService {
     await this.verificarActividadYRecurso(actividadId, recursoId);
     this.validarCantidadMinima(cantidadPorUnidad);
 
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        const detalle = await tx.apuDetalle.create({
-          data: { actividadId, recursoId, cantidadPorUnidad },
-          include: { recurso: true, actividad: true },
+    return this.prisma.$transaction(
+      async (tx) => {
+        const recurso = await tx.recurso.findUniqueOrThrow({
+          where: { id: recursoId },
+          select: { tipo: true },
         });
+        const detalleExistente =
+          recurso.tipo === TipoRecurso.material
+            ? await tx.apuDetalle.findFirst({
+                where: { actividadId, recursoId },
+              })
+            : null;
+        const detalle = detalleExistente
+          ? await tx.apuDetalle.update({
+              where: { id: detalleExistente.id },
+              data: {
+                cantidadPorUnidad: { increment: cantidadPorUnidad },
+              },
+              include: { recurso: true, actividad: true },
+            })
+          : await tx.apuDetalle.create({
+              data: { actividadId, recursoId, cantidadPorUnidad },
+              include: { recurso: true, actividad: true },
+            });
 
         await this.recalcularCache(tx, actividadId);
 
         return detalle;
-      });
-    } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        throw new ConflictException(
-          'Este recurso ya forma parte del APU de esta actividad',
-        );
-      }
-      throw error;
-    }
+      },
+      APU_TRANSACTION_OPTIONS,
+    );
   }
 
   findAll() {
@@ -96,17 +106,20 @@ export class ApusService {
     );
 
     try {
-      return await this.prisma.$transaction(async (tx) => {
-        const actualizado = await tx.apuDetalle.update({
-          where: { id },
-          data: updateApusDto,
-          include: { recurso: true, actividad: true },
-        });
+      return await this.prisma.$transaction(
+        async (tx) => {
+          const actualizado = await tx.apuDetalle.update({
+            where: { id },
+            data: updateApusDto,
+            include: { recurso: true, actividad: true },
+          });
 
-        await this.recalcularCache(tx, actual.actividadId);
+          await this.recalcularCache(tx, actual.actividadId);
 
-        return actualizado;
-      });
+          return actualizado;
+        },
+        APU_TRANSACTION_OPTIONS,
+      );
     } catch (error) {
       throw error instanceof Error ? error : new Error('Error al actualizar APU');
     }
@@ -115,15 +128,18 @@ export class ApusService {
   async remove(id: string) {
     const actual = await this.findOne(id);
 
-    return await this.prisma.$transaction(async (tx) => {
-      const eliminado = await tx.apuDetalle.delete({
-        where: { id },
-      });
+    return await this.prisma.$transaction(
+      async (tx) => {
+        const eliminado = await tx.apuDetalle.delete({
+          where: { id },
+        });
 
-      await this.recalcularCache(tx, actual.actividadId);
+        await this.recalcularCache(tx, actual.actividadId);
 
-      return eliminado;
-    });
+        return eliminado;
+      },
+      APU_TRANSACTION_OPTIONS,
+    );
   }
 
   private async verificarActividadYRecurso(
