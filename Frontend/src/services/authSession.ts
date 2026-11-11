@@ -92,6 +92,11 @@ export function getAuthToken(): string | null {
     return getAuthSession()?.access_token ?? null;
 }
 
+export function canManagePlatformData(): boolean {
+    const role = getAuthSession()?.user.rol;
+    return role === "administrador" || role === "presupuestista";
+}
+
 export function getAuthSessionExpiry(): number | null {
     const token = getAuthToken();
     return token ? decodeTokenExpiration(token) : null;

@@ -7,14 +7,19 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Res,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { AgregarItemDto } from './dto/agregar-item.dto.js';
 import { CreatePresupuestoDto } from './dto/create-presupuesto.dto.js';
+import { QueryPresupuestoResumenDto } from './dto/query-presupuesto-resumen.dto.js';
 import { UpdatePresupuestoDto } from './dto/update-presupuesto.dto.js';
 import { PresupuestosService } from './presupuestos.service.js';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
+import { WriteAccessGuard } from '../auth/guards/write-access.guard.js';
 
 @ApiTags('presupuestos')
 @Controller('presupuestos')
@@ -22,6 +27,7 @@ export class PresupuestosController {
   constructor(private readonly presupuestosService: PresupuestosService) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard, WriteAccessGuard)
   @ApiOperation({
     summary: 'Crea un presupuesto para un proyecto (con porcentajes por defecto o personalizados)',
   })
@@ -35,6 +41,12 @@ export class PresupuestosController {
     return this.presupuestosService.findAll();
   }
 
+  @Get('resumen')
+  @ApiOperation({ summary: 'Lista presupuestos con datos resumidos para la pantalla principal' })
+  findAllResumidos(@Query() query: QueryPresupuestoResumenDto) {
+    return this.presupuestosService.findAllResumidos(query);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Obtiene el detalle completo de un presupuesto' })
   findOne(@Param('id', ParseUUIDPipe) id: string) {
@@ -42,6 +54,7 @@ export class PresupuestosController {
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, WriteAccessGuard)
   @ApiOperation({ summary: 'Actualiza nombre o porcentajes y recalcula el presupuesto' })
   update(
     @Param('id', ParseUUIDPipe) id: string,
@@ -51,12 +64,14 @@ export class PresupuestosController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, WriteAccessGuard)
   @ApiOperation({ summary: 'Elimina un presupuesto' })
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.presupuestosService.remove(id);
   }
 
   @Post(':id/items')
+  @UseGuards(JwtAuthGuard, WriteAccessGuard)
   @ApiOperation({
     summary: 'Agrega una actividad al presupuesto congelando su costo unitario y por categoría',
   })
@@ -68,6 +83,7 @@ export class PresupuestosController {
   }
 
   @Delete(':id/items/:itemId')
+  @UseGuards(JwtAuthGuard, WriteAccessGuard)
   @ApiOperation({ summary: 'Quita una actividad del presupuesto y recalcula los totales' })
   quitarItem(
     @Param('id', ParseUUIDPipe) id: string,
@@ -77,6 +93,7 @@ export class PresupuestosController {
   }
 
   @Post(':id/sincronizar')
+  @UseGuards(JwtAuthGuard, WriteAccessGuard)
   @ApiOperation({
     summary: 'Sincroniza y actualiza los costos del presupuesto con los APU actuales de las actividades',
   })

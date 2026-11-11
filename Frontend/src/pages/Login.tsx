@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Building2, Eye, EyeOff, LockKeyhole, Mail } from "lucide-react";
 import { isAxiosError } from "axios";
 import { Link, useNavigate } from "react-router-dom";
-import { login } from "../services/auth";
+import { login, register } from "../services/auth";
 import { saveAuthSession } from "../services/authSession";
 import "./Login.css";
 
@@ -61,11 +61,15 @@ function ConstructionIllustration() {
 }
 
 export default function Login() {
+    const [mode, setMode] = useState<"login" | "register">("login");
     const [passwordVisible, setPasswordVisible] = useState(false);
+    const [nombre, setNombre] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
     const [remember, setRemember] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [registrationComplete, setRegistrationComplete] = useState(false);
     const [errorMessage, setErrorMessage] = useState("");
     const navigate = useNavigate();
 
@@ -77,12 +81,27 @@ export default function Login() {
         setErrorMessage("");
 
         try {
+            if (mode === "register") {
+                if (password !== confirmPassword) {
+                    setErrorMessage("Las contraseñas no coinciden.");
+                    return;
+                }
+
+                await register(nombre, email, password);
+                setRegistrationComplete(true);
+                return;
+            }
+
             const session = await login(email, password);
             saveAuthSession(session, remember);
             navigate("/", { replace: true });
         } catch (error: unknown) {
             if (isAxiosError(error)) {
-                if (error.response?.status === 401) {
+                if (error.response?.status === 409) {
+                    setErrorMessage("Ya existe una cuenta registrada con ese correo.");
+                } else if (error.response?.status === 403) {
+                    setErrorMessage("Tu cuenta está pendiente de aprobación. Te avisaremos por correo cuando se habilite el acceso.");
+                } else if (error.response?.status === 401) {
                     setErrorMessage("El correo o la contraseña no son correctos.");
                 } else if (error.response && error.response.status >= 500) {
                     setErrorMessage("El servidor tuvo un problema. Intenta de nuevo más tarde.");
@@ -97,6 +116,12 @@ export default function Login() {
         } finally {
             setLoading(false);
         }
+    }
+
+    function changeMode(nextMode: "login" | "register") {
+        setMode(nextMode);
+        setRegistrationComplete(false);
+        setErrorMessage("");
     }
 
     return (
@@ -145,97 +170,190 @@ export default function Login() {
 
             <section className="login-form-panel">
                 <div className="login-form-wrap">
-                    <div className="login-form-heading">
-                        <span className="login-form-kicker">BIENVENIDO/A</span>
-                        <h2>Iniciar sesión</h2>
-                        <p>Ingresá a tu espacio de trabajo.</p>
-                    </div>
-
-                    <form
-                        className="login-form"
-                        onSubmit={handleSubmit}
-                        aria-busy={loading}
-                    >
-                        <label className="login-label" htmlFor="login-email">
-                            Correo electrónico
-                        </label>
-                        <div className="login-input-wrap">
-                            <Mail className="login-input-icon" size={19} aria-hidden="true" />
-                            <input
-                                id="login-email"
-                                name="email"
-                                type="email"
-                                value={email}
-                                onChange={(event) => setEmail(event.target.value)}
-                                disabled={loading}
-                                required
-                                autoComplete="email"
-                                placeholder="nombre@empresa.com"
-                            />
-                        </div>
-
-                        <div className="login-password-label-row">
-                            <label className="login-label" htmlFor="login-password">
-                                Contraseña
-                            </label>
-                            <Link
-                                className="login-forgot-link"
-                                to="/recuperar-contrasena"
-                            >
-                                ¿Olvidaste tu contraseña?
-                            </Link>
-                        </div>
-                        <div className="login-input-wrap">
-                            <LockKeyhole className="login-input-icon" size={19} aria-hidden="true" />
-                            <input
-                                id="login-password"
-                                name="password"
-                                type={passwordVisible ? "text" : "password"}
-                                value={password}
-                                onChange={(event) => setPassword(event.target.value)}
-                                disabled={loading}
-                                required
-                                autoComplete="current-password"
-                                placeholder="Ingresá tu contraseña"
-                            />
+                    {registrationComplete ? (
+                        <div className="login-registration-success" role="status">
+                            <span className="login-form-kicker">SOLICITUD ENVIADA</span>
+                            <h2>Registro completado</h2>
+                            <p>
+                                Tu cuenta quedó pendiente de aprobación. Podrás
+                                iniciar sesión cuando un administrador te asigne
+                                un rol y habilite el acceso.
+                            </p>
                             <button
-                                className="login-password-toggle"
+                                className="login-submit"
                                 type="button"
-                                disabled={loading}
-                                aria-label={passwordVisible ? "Ocultar contraseña" : "Mostrar contraseña"}
-                                aria-pressed={passwordVisible}
-                                onClick={() => setPasswordVisible((visible) => !visible)}
+                                onClick={() => changeMode("login")}
                             >
-                                {passwordVisible ? (
-                                    <EyeOff size={19} aria-hidden="true" />
-                                ) : (
-                                    <Eye size={19} aria-hidden="true" />
-                                )}
+                                Volver a iniciar sesión
                             </button>
                         </div>
+                    ) : (
+                        <>
+                            <div className="login-form-heading">
+                                <span className="login-form-kicker">
+                                    {mode === "login" ? "BIENVENIDO/A" : "NUEVA CUENTA"}
+                                </span>
+                                <h2>
+                                    {mode === "login" ? "Iniciar sesión" : "Crear cuenta"}
+                                </h2>
+                                <p>
+                                    {mode === "login"
+                                        ? "Ingresá a tu espacio de trabajo."
+                                        : "Solicitá acceso a la plataforma."}
+                                </p>
+                            </div>
 
-                        <label className="login-remember">
-                            <input
-                                type="checkbox"
-                                name="remember"
-                                checked={remember}
-                                onChange={(event) => setRemember(event.target.checked)}
-                                disabled={loading}
-                            />
-                            <span className="login-checkbox" aria-hidden="true" />
-                            <span>Recordarme</span>
-                        </label>
+                            <form
+                                className="login-form"
+                                onSubmit={handleSubmit}
+                                aria-busy={loading}
+                            >
+                                {mode === "register" && (
+                                    <>
+                                        <label className="login-label" htmlFor="register-name">
+                                            Nombre completo
+                                        </label>
+                                        <div className="login-input-wrap">
+                                            <Building2 className="login-input-icon" size={19} aria-hidden="true" />
+                                            <input
+                                                id="register-name"
+                                                name="nombre"
+                                                type="text"
+                                                value={nombre}
+                                                onChange={(event) => setNombre(event.target.value)}
+                                                disabled={loading}
+                                                required
+                                                maxLength={120}
+                                                autoComplete="name"
+                                                placeholder="Tu nombre y apellido"
+                                            />
+                                        </div>
+                                    </>
+                                )}
 
-                        {errorMessage && (
-                            <p className="login-error" role="alert">
-                                {errorMessage}
+                                <label className="login-label" htmlFor="login-email">
+                                    Correo electrónico
+                                </label>
+                                <div className="login-input-wrap">
+                                    <Mail className="login-input-icon" size={19} aria-hidden="true" />
+                                    <input
+                                        id="login-email"
+                                        name="email"
+                                        type="email"
+                                        value={email}
+                                        onChange={(event) => setEmail(event.target.value)}
+                                        disabled={loading}
+                                        required
+                                        autoComplete="email"
+                                        placeholder="nombre@empresa.com"
+                                    />
+                                </div>
+
+                                <div className="login-password-label-row">
+                                    <label className="login-label" htmlFor="login-password">
+                                        Contraseña
+                                    </label>
+                                    {mode === "login" && (
+                                        <Link
+                                            className="login-forgot-link"
+                                            to="/recuperar-contrasena"
+                                        >
+                                            ¿Olvidaste tu contraseña?
+                                        </Link>
+                                    )}
+                                </div>
+                                <div className="login-input-wrap">
+                                    <LockKeyhole className="login-input-icon" size={19} aria-hidden="true" />
+                                    <input
+                                        id="login-password"
+                                        name="password"
+                                        type={passwordVisible ? "text" : "password"}
+                                        value={password}
+                                        onChange={(event) => setPassword(event.target.value)}
+                                        disabled={loading}
+                                        required
+                                        minLength={mode === "register" ? 8 : undefined}
+                                        maxLength={72}
+                                        autoComplete={mode === "login" ? "current-password" : "new-password"}
+                                        placeholder="Ingresá tu contraseña"
+                                    />
+                                    <button
+                                        className="login-password-toggle"
+                                        type="button"
+                                        disabled={loading}
+                                        aria-label={passwordVisible ? "Ocultar contraseña" : "Mostrar contraseña"}
+                                        aria-pressed={passwordVisible}
+                                        onClick={() => setPasswordVisible((visible) => !visible)}
+                                    >
+                                        {passwordVisible ? (
+                                            <EyeOff size={19} aria-hidden="true" />
+                                        ) : (
+                                            <Eye size={19} aria-hidden="true" />
+                                        )}
+                                    </button>
+                                </div>
+
+                                {mode === "register" ? (
+                                    <>
+                                        <label className="login-label login-confirm-label" htmlFor="confirm-password">
+                                            Confirmar contraseña
+                                        </label>
+                                        <div className="login-input-wrap">
+                                            <LockKeyhole className="login-input-icon" size={19} aria-hidden="true" />
+                                            <input
+                                                id="confirm-password"
+                                                name="confirmPassword"
+                                                type={passwordVisible ? "text" : "password"}
+                                                value={confirmPassword}
+                                                onChange={(event) => setConfirmPassword(event.target.value)}
+                                                disabled={loading}
+                                                required
+                                                minLength={8}
+                                                maxLength={72}
+                                                autoComplete="new-password"
+                                                placeholder="Repetí tu contraseña"
+                                            />
+                                        </div>
+                                    </>
+                                ) : (
+                                    <label className="login-remember">
+                                        <input
+                                            type="checkbox"
+                                            name="remember"
+                                            checked={remember}
+                                            onChange={(event) => setRemember(event.target.checked)}
+                                            disabled={loading}
+                                        />
+                                        <span className="login-checkbox" aria-hidden="true" />
+                                        <span>Recordarme</span>
+                                    </label>
+                                )}
+
+                                {errorMessage && (
+                                    <p className="login-error" role="alert">
+                                        {errorMessage}
+                                    </p>
+                                )}
+
+                                <button className="login-submit" type="submit" disabled={loading}>
+                                    {loading
+                                        ? mode === "login" ? "Iniciando sesión..." : "Enviando solicitud..."
+                                        : mode === "login" ? "Iniciar sesión" : "Solicitar acceso"}
+                                </button>
+                            </form>
+
+                            <p className="login-mode-switch">
+                                {mode === "login" ? "¿No tenés una cuenta?" : "¿Ya tenés una cuenta?"}
+                                <button
+                                    type="button"
+                                    disabled={loading}
+                                    onClick={() => changeMode(mode === "login" ? "register" : "login")}
+                                >
+                                    {mode === "login" ? "Registrate" : "Iniciá sesión"}
+                                </button>
                             </p>
-                        )}
-
-                        <button className="login-submit" type="submit" disabled={loading}>
-                            {loading ? "Iniciando sesión..." : "Iniciar sesión"}
-                        </button>
-                    </form>
+                        </>
+                    )}
                 </div>
             </section>
         </main>

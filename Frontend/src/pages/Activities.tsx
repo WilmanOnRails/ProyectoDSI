@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { Plus, Trash2, Search, Filter, FolderKanban } from "lucide-react";
-import api from "../services/api";
+import api, { apiGet } from "../services/api";
 import HorizontalTable from "../components/HorizontalTable";
+import { canManagePlatformData } from "../services/authSession";
 
 type Activity = {
   id: string;
@@ -19,6 +20,20 @@ type Activity = {
     };
   }>;
 };
+
+type ActivityPage = {
+  items: Activity[];
+  total: number;
+  pagina: number;
+  limite: number;
+};
+
+type ProjectOption = {
+  id: string;
+  nombre: string;
+};
+
+type Proyecto = ProjectOption;
 
 type Resource = {
   id: string;
@@ -52,9 +67,16 @@ type ActivityApuData = Activity & {
 
 const money = (v: string | number) =>
   `C$ ${Number(v || 0).toLocaleString("es-NI", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const PAGE_SIZE = 50;
 
 export default function Activities() {
+  const canEdit = canManagePlatformData();
   const [items, setItems] = useState<Activity[]>([]);
+  const [totalActivities, setTotalActivities] = useState(0);
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [page, setPage] = useState(1);
+  const [loadedActivityQuery, setLoadedActivityQuery] = useState<string | null>(null);
+  const [reloadCounter, setReloadCounter] = useState(0);
   const [resources, setResources] = useState<Resource[]>([]);
   const [selected, setSelected] = useState<ActivityApuData | null>(null);
   const [recursoId, setRecursoId] = useState("");
@@ -68,30 +90,106 @@ export default function Activities() {
   const [proyectoFiltro, setProyectoFiltro] = useState<string>("ALL");
   const [busquedaRecurso, setBusquedaRecurso] = useState("");
   const [categoriaFiltro, setCategoriaFiltro] = useState("ALL");
-
-  const loadActivities = () => {
-    api
-      .get<Activity[]>("/activities")
-      .then((r) => setItems(r.data))
-      .catch(() => setError("No se pudieron cargar las actividades."));
-  };
-
-  const loadResources = () => {
-    api
-      .get<Resource[]>("/recursos")
-      .then((r) => setResources(r.data))
-      .catch(() => {});
-  };
+  const [resourceSearchApplied, setResourceSearchApplied] = useState("");
+  const activityQueryKey = JSON.stringify([
+    page,
+    proyectoFiltro,
+    reloadCounter,
+  ]);
+  const activitiesLoading = loadedActivityQuery !== activityQueryKey;
+  const selectedActivityId = selected?.id;
 
   useEffect(() => {
-    loadActivities();
-    loadResources();
+    let active = true;
+    const params = {
+      pagina: page,
+      limite: PAGE_SIZE,
+      ...(proyectoFiltro !== "ALL" ? { proyectoId: proyectoFiltro } : {}),
+    };
+    const request =
+      reloadCounter === 0
+        ? apiGet<ActivityPage>("/activities", params)
+        : api.get<ActivityPage>("/activities", { params }).then(({ data }) => data);
+
+    request
+      .then((result) => {
+        if (!active) return;
+        setItems(result.items);
+        setTotalActivities(result.total);
+      })
+      .catch(() => {
+        if (active) setError("No se pudieron cargar las actividades.");
+      })
+      .finally(() => {
+        if (active) setLoadedActivityQuery(activityQueryKey);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [page, proyectoFiltro, reloadCounter, activityQueryKey]);
+
+  useEffect(() => {
+    let active = true;
+    apiGet<Proyecto[]>("/projects")
+      .then((result) => {
+        if (active) setProjects(result.map(({ id, nombre }) => ({ id, nombre })));
+      })
+      .catch(() => {
+        if (active) setError("No se pudieron cargar los proyectos.");
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setResourceSearchApplied(busquedaRecurso.trim()),
+      250,
+    );
+    return () => window.clearTimeout(timer);
+  }, [busquedaRecurso]);
+
+  useEffect(() => {
+    if (!selectedActivityId) return;
+    let active = true;
+    const tipos =
+      tipoSeccion === "equipo_transporte"
+        ? ["equipo", "transporte"]
+        : [tipoSeccion];
+    const requests = tipos.map((tipo) =>
+      apiGet<Resource[]>("/recursos", {
+        activo: true,
+        tipo,
+        ...(categoriaFiltro !== "ALL" ? { categoria: categoriaFiltro } : {}),
+        ...(resourceSearchApplied ? { buscar: resourceSearchApplied } : {}),
+      }),
+    );
+
+    Promise.all(requests)
+      .then((results) => {
+        if (active) setResources(results.flat());
+      })
+      .catch(() => {
+        if (active) setError("No se pudieron cargar los recursos para el APU.");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedActivityId, tipoSeccion, categoriaFiltro, resourceSearchApplied]);
+
+  const reloadActivities = () => {
+    setReloadCounter((current) => current + 1);
+    setError("");
+  };
 
   const openApu = async (id: string, shouldScroll = false) => {
     try {
-      const res = await api.get<ActivityApuData>(`/apus/actividad/${id}`);
-      setSelected(res.data);
+      const data = await apiGet<ActivityApuData>(`/apus/actividad/${id}`);
+      setSelected(data);
       setScrollToApu(shouldScroll);
       setError("");
       setMensaje("");
@@ -103,7 +201,6 @@ export default function Activities() {
   useEffect(() => {
     if (!selected || !scrollToApu) return;
     apuDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    setScrollToApu(false);
   }, [selected, scrollToApu]);
 
   const addApuItem = async () => {
@@ -121,9 +218,11 @@ export default function Activities() {
       setMensaje("Recurso agregado al APU correctamente.");
       setRecursoId("");
       setCantidad("1");
+      reloadActivities();
       await openApu(selected.id);
-    } catch (err: any) {
-      setError(err?.response?.data?.message || "No se pudo agregar el recurso al APU.");
+    } catch (err: unknown) {
+      const apiError = err as { response?: { data?: { message?: string } } };
+      setError(apiError.response?.data?.message || "No se pudo agregar el recurso al APU.");
     }
   };
 
@@ -132,31 +231,12 @@ export default function Activities() {
     try {
       await api.delete(`/apus/${apuId}`);
       setMensaje("Recurso eliminado del APU.");
+      reloadActivities();
       await openApu(selected.id);
     } catch {
       setError("No se pudo eliminar el recurso del APU.");
     }
   };
-
-  const proyectosMap = useMemo(() => {
-    const map = new Map<string, string>();
-    items.forEach((act) => {
-      act.presupuestoItems?.forEach((pi) => {
-        const p = pi.presupuesto?.proyecto;
-        if (p) {
-          map.set(p.id, p.nombre);
-        }
-      });
-    });
-    return Array.from(map.entries()).map(([id, nombre]) => ({ id, nombre }));
-  }, [items]);
-
-  const actividadesFiltradas = useMemo(() => {
-    if (proyectoFiltro === "ALL") return items;
-    return items.filter((act) =>
-      act.presupuestoItems?.some((pi) => pi.presupuesto?.proyecto?.id === proyectoFiltro)
-    );
-  }, [items, proyectoFiltro]);
 
   // Recursos filtrados según la sección activa (Materiales, Mano de Obra, Equipos/Transporte)
   const recursosDisponibles = useMemo(() => {
@@ -201,8 +281,8 @@ export default function Activities() {
       <section className="panel data-panel">
         <div className="panel-heading">
           <div>
-            <h2>Actividades registradas ({actividadesFiltradas.length} de {items.length})</h2>
-            <p>{error || mensaje || "Seleccioná una actividad para configurar sus costos unitarios."}</p>
+            <h2>Actividades registradas ({totalActivities})</h2>
+            <p>{error || mensaje || (canEdit ? "Seleccioná una actividad para configurar sus costos unitarios." : "Seleccioná una actividad para consultar sus costos unitarios.")}</p>
           </div>
           <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "center" }}>
             <FolderKanban size={18} color="#64748b" />
@@ -210,10 +290,13 @@ export default function Activities() {
               className="text-input"
               style={{ width: "240px", padding: "8px" }}
               value={proyectoFiltro}
-              onChange={(e) => setProyectoFiltro(e.target.value)}
+              onChange={(e) => {
+                setProyectoFiltro(e.target.value);
+                setPage(1);
+              }}
             >
-              <option value="ALL">Todos los proyectos ({items.length})</option>
-              {proyectosMap.map((p) => (
+              <option value="ALL">Todos los proyectos ({totalActivities})</option>
+              {projects.map((p) => (
                 <option key={p.id} value={p.id}>{p.nombre}</option>
               ))}
             </select>
@@ -233,7 +316,7 @@ export default function Activities() {
               </tr>
             </thead>
             <tbody>
-              {actividadesFiltradas.map((x) => {
+              {items.map((x) => {
                 const nombreProyecto = x.presupuestoItems?.[0]?.presupuesto?.proyecto?.nombre || "Sin proyecto";
                 const capitulo = x.capituloNombre || x.capituloCodigo || "General";
                 return (
@@ -245,20 +328,48 @@ export default function Activities() {
                     <td><span className="project-badge">{nombreProyecto}</span></td>
                     <td>
                       <button className="text-link" onClick={() => void openApu(x.id, true)}>
-                        Configurar APU
+                        {canEdit ? "Configurar APU" : "Ver APU"}
                       </button>
                     </td>
                   </tr>
                 );
               })}
-              {!actividadesFiltradas.length && (
+              {!activitiesLoading && !items.length && (
                 <tr>
                   <td colSpan={6}>No hay actividades registradas.</td>
+                </tr>
+              )}
+              {activitiesLoading && (
+                <tr>
+                  <td colSpan={6}>Cargando actividades...</td>
                 </tr>
               )}
             </tbody>
           </table>
         </HorizontalTable>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 24px" }}>
+          <span>
+            {totalActivities === 0
+              ? "Sin actividades"
+              : `Mostrando ${(page - 1) * PAGE_SIZE + 1}-${Math.min(page * PAGE_SIZE, totalActivities)} de ${totalActivities}`}
+          </span>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              className="secondary-button"
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page === 1 || activitiesLoading}
+            >
+              Anterior
+            </button>
+            <button
+              className="secondary-button"
+              onClick={() => setPage((current) => current + 1)}
+              disabled={page * PAGE_SIZE >= totalActivities || activitiesLoading}
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
       </section>
 
       {selected && (
@@ -331,7 +442,7 @@ export default function Activities() {
             </div>
           </div>
 
-          <div className="apu-form-grid">
+          {canEdit && <div className="apu-form-grid">
             <label>
               {tipoSeccion === "material" ? "Seleccionar Material" :
                tipoSeccion === "mano_obra" ? "Seleccionar Cargo / Mano de Obra" : "Seleccionar Equipo / Transporte"} ({recursosDisponibles.length} disponibles)
@@ -359,7 +470,7 @@ export default function Activities() {
             <button className="primary-button add-apu-btn" onClick={() => void addApuItem()}>
               <Plus size={16} /> Agregar a la partida
             </button>
-          </div>
+          </div>}
 
           {mensaje && <div className="import-success">{mensaje}</div>}
           {error && <div className="import-error">{error}</div>}
@@ -376,7 +487,7 @@ export default function Activities() {
                   <th>Cant. / Unidad de actividad</th>
                   <th>Precio Unitario</th>
                   <th>Subtotal</th>
-                  <th></th>
+                  {canEdit && <th></th>}
                 </tr>
               </thead>
               <tbody>
@@ -391,16 +502,16 @@ export default function Activities() {
                       <td>{det.cantidadPorUnidad}</td>
                       <td>{money(precio)}</td>
                       <td>{money(subtotal)}</td>
-                      <td>
+                      {canEdit && <td>
                         <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
                           <Trash2 size={16} />
                         </button>
-                      </td>
+                      </td>}
                     </tr>
                   );
                 })}
                 {!detallesMateriales.length && (
-                  <tr><td colSpan={7}>No hay materiales agregados en este APU.</td></tr>
+                  <tr><td colSpan={canEdit ? 7 : 6}>No hay materiales agregados en este APU.</td></tr>
                 )}
               </tbody>
             </table>
@@ -418,7 +529,7 @@ export default function Activities() {
                   <th>Horas-Hombre (HH) / unidad</th>
                   <th>Salario x Hora</th>
                   <th>Monto Total</th>
-                  <th></th>
+                  {canEdit && <th></th>}
                 </tr>
               </thead>
               <tbody>
@@ -433,16 +544,16 @@ export default function Activities() {
                       <td>{det.cantidadPorUnidad}</td>
                       <td>{money(salarioHora)}</td>
                       <td>{money(monto)}</td>
-                      <td>
+                      {canEdit && <td>
                         <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
                           <Trash2 size={16} />
                         </button>
-                      </td>
+                      </td>}
                     </tr>
                   );
                 })}
                 {!detallesManoDeObra.length && (
-                  <tr><td colSpan={7}>No hay mano de obra agregada en este APU.</td></tr>
+                  <tr><td colSpan={canEdit ? 7 : 6}>No hay mano de obra agregada en este APU.</td></tr>
                 )}
               </tbody>
             </table>
@@ -460,7 +571,7 @@ export default function Activities() {
                   <th>Horas-Máquina (HM) / unidad o viajes</th>
                   <th>Renta Horaria</th>
                   <th>Monto Total</th>
-                  <th></th>
+                  {canEdit && <th></th>}
                 </tr>
               </thead>
               <tbody>
@@ -475,16 +586,16 @@ export default function Activities() {
                       <td>{det.cantidadPorUnidad}</td>
                       <td>{money(renta)}</td>
                       <td>{money(monto)}</td>
-                      <td>
+                      {canEdit && <td>
                         <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
                           <Trash2 size={16} />
                         </button>
-                      </td>
+                      </td>}
                     </tr>
                   );
                 })}
                 {!detallesEquiposTransporte.length && (
-                  <tr><td colSpan={7}>No hay equipos ni transporte agregados en este APU.</td></tr>
+                  <tr><td colSpan={canEdit ? 7 : 6}>No hay equipos ni transporte agregados en este APU.</td></tr>
                 )}
               </tbody>
             </table>

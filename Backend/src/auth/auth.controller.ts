@@ -1,6 +1,7 @@
 import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { ForgotPasswordDto } from './dto/forgot-password.dto.js';
 import { LoginDto } from './dto/login.dto.js';
+import { RegisterDto } from './dto/register.dto.js';
 import { ResetPasswordDto } from './dto/reset-password.dto.js';
 import { AuthService } from './auth.service.js';
 
@@ -12,6 +13,11 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   login(@Body() data: LoginDto) {
     return this.authService.login(data);
+  }
+
+  @Post('register')
+  register(@Body() data: RegisterDto) {
+    return this.authService.register(data);
   }
 
   @Post('forgot-password')

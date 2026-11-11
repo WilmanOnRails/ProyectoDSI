@@ -273,6 +273,57 @@
     font-size: 14px;
 }
 
+.login-confirm-label {
+    margin-top: 21px;
+}
+
+.login-mode-switch {
+    display: flex;
+    justify-content: center;
+    gap: 5px;
+    margin: 24px 0 0;
+    color: #7d8999;
+    font-size: 12px;
+}
+
+.login-mode-switch button {
+    padding: 0;
+    border: 0;
+    color: #2f65c5;
+    background: transparent;
+    font-size: inherit;
+    font-weight: 650;
+}
+
+.login-mode-switch button:hover {
+    color: #1d4fa9;
+}
+
+.login-mode-switch button:focus-visible {
+    outline: 3px solid rgb(49 105 212 / 30%);
+    outline-offset: 3px;
+}
+
+.login-mode-switch button:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+
+.login-registration-success h2 {
+    margin: 0;
+    color: #17243a;
+    font-size: clamp(29px, 3vw, 35px);
+    font-weight: 650;
+    letter-spacing: -1.3px;
+}
+
+.login-registration-success p {
+    margin: 13px 0 0;
+    color: #7d8999;
+    font-size: 14px;
+    line-height: 1.7;
+}
+
 .login-form {
     display: flex;
     flex-direction: column;

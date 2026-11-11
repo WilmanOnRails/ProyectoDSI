@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -9,8 +11,10 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { createHash, randomBytes } from 'node:crypto';
 import { LoginDto } from './dto/login.dto.js';
+import { RegisterDto } from './dto/register.dto.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import * as bcrypt from 'bcryptjs';
+import { Prisma } from '@prisma/client';
 
 const passwordResetRequestMessage =
   'Si existe una cuenta activa con ese correo, recibirás instrucciones para recuperar tu contraseña.';
@@ -37,12 +41,41 @@ export class AuthService {
     private readonly configService: ConfigService,
   ) {}
 
+  async register(data: RegisterDto): Promise<{ message: string }> {
+    const email = data.email.trim().toLowerCase();
+    const passwordHash = await bcrypt.hash(data.password, 10);
+
+    try {
+      await this.prisma.usuario.create({
+        data: {
+          nombre: data.nombre.trim(),
+          email,
+          passwordHash,
+          activo: false,
+        },
+      });
+    } catch (error: unknown) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('Ya existe una cuenta con ese correo');
+      }
+      throw error;
+    }
+
+    return {
+      message:
+        'Tu solicitud fue registrada. Un administrador debe aprobarla antes de que puedas iniciar sesión.',
+    };
+  }
+
   async login(credentials: LoginDto): Promise<LoginResponse> {
     const user = await this.prisma.usuario.findUnique({
-      where: { email: credentials.email },
+      where: { email: credentials.email.trim().toLowerCase() },
     });
 
-    if (!user || !user.activo) {
+    if (!user) {
       throw new UnauthorizedException('Correo o contraseña incorrectos');
     }
 
@@ -53,6 +86,12 @@ export class AuthService {
 
     if (!passwordMatches) {
       throw new UnauthorizedException('Correo o contraseña incorrectos');
+    }
+
+    if (!user.activo) {
+      throw new ForbiddenException(
+        'Tu cuenta está pendiente de aprobación por un administrador.',
+      );
     }
 
     const accessToken = await this.jwtService.signAsync({

@@ -211,7 +211,6 @@ enum Rol {
   administrador
   presupuestista
   solo_lectura
-  ingeniero
 
   @@map("rol")
 }
