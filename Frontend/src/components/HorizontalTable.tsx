@@ -62,9 +62,6 @@ export default function HorizontalTable({ children, className = "", style }: Pro
       }
     };
 
-    const syncFloating = () => {
-      if (floatingRef.current) source.scrollLeft = floatingRef.current.scrollLeft;
-    };
     const observer = new ResizeObserver(update);
     observer.observe(source);
     if (source.firstElementChild) observer.observe(source.firstElementChild);
@@ -72,7 +69,6 @@ export default function HorizontalTable({ children, className = "", style }: Pro
     mutations.observe(source, { childList: true, subtree: true, attributes: true });
 
     source.addEventListener("scroll", update, { passive: true });
-    floatingRef.current?.addEventListener("scroll", syncFloating, { passive: true });
     window.addEventListener("scroll", update, { passive: true });
     window.addEventListener("resize", update, { passive: true });
     update();
@@ -81,7 +77,6 @@ export default function HorizontalTable({ children, className = "", style }: Pro
       observer.disconnect();
       mutations.disconnect();
       source.removeEventListener("scroll", update);
-      floatingRef.current?.removeEventListener("scroll", syncFloating);
       window.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);
     };
@@ -106,6 +101,12 @@ export default function HorizontalTable({ children, className = "", style }: Pro
             role="region"
             aria-label="Desplazamiento horizontal de la tabla"
             tabIndex={0}
+            onScroll={(event) => {
+              const source = sourceRef.current;
+              if (source && source.scrollLeft !== event.currentTarget.scrollLeft) {
+                source.scrollLeft = event.currentTarget.scrollLeft;
+              }
+            }}
           >
             <div style={{ width: floatingBar.scrollWidth, height: 1 }} />
           </div>,
