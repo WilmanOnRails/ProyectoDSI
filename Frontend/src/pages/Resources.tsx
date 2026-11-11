@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Edit3, Filter, Package, Plus, Search, Trash2 } from "lucide-react";
-import api from "../services/api";
+import api, { apiGet } from "../services/api";
 import HorizontalTable from "../components/HorizontalTable";
+import { canManagePlatformData } from "../services/authSession";
 
 type Resource = {
   id: string;
@@ -25,7 +26,20 @@ type ResourceForm = {
   proveedor: string;
 };
 
+type ResourcePage = {
+  items: Resource[];
+  total: number;
+  pagina: number;
+  limite: number;
+};
+
+type ResourceOptions = {
+  categorias: string[];
+  unidades: string[];
+};
+
 const NUEVA_OPCION = "__nueva__";
+const PAGE_SIZE = 50;
 
 const formularioVacio = (): ResourceForm => ({
   descripcion: "",
@@ -39,58 +53,91 @@ const formularioVacio = (): ResourceForm => ({
 });
 
 export default function Resources() {
+  const canEdit = canManagePlatformData();
   const [items, setItems] = useState<Resource[]>([]);
+  const [total, setTotal] = useState(0);
+  const [pagina, setPagina] = useState(1);
+  const [opciones, setOpciones] = useState<ResourceOptions>({
+    categorias: [],
+    unidades: [],
+  });
+  const [consultaCargada, setConsultaCargada] = useState<string | null>(null);
+  const [recargar, setRecargar] = useState(0);
   const [error, setError] = useState("");
   const [mensaje, setMensaje] = useState("");
   const [errorAccion, setErrorAccion] = useState("");
   const [busqueda, setBusqueda] = useState("");
+  const [busquedaAplicada, setBusquedaAplicada] = useState("");
   const [tipoFiltro, setTipoFiltro] = useState("ALL");
   const [categoriaFiltro, setCategoriaFiltro] = useState("ALL");
   const [formulario, setFormulario] = useState<ResourceForm | null>(null);
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [recursoAEliminar, setRecursoAEliminar] = useState<Resource | null>(null);
   const [guardando, setGuardando] = useState(false);
-
-  const loadResources = () => {
-    api
-      .get<Resource[]>("/recursos", { params: { activo: true } })
-      .then((r) => {
-        setItems(r.data);
-        setError("");
-      })
-      .catch(() => setError("No se pudieron cargar los recursos."));
-  };
+  const consultaActual = JSON.stringify([
+    pagina,
+    tipoFiltro,
+    categoriaFiltro,
+    busquedaAplicada,
+    recargar,
+  ]);
+  const cargando = consultaCargada !== consultaActual;
 
   useEffect(() => {
-    loadResources();
-  }, []);
+    const timer = window.setTimeout(() => setBusquedaAplicada(busqueda.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [busqueda]);
 
-  const categoriasUnicas = useMemo(() => {
-    const categorias = new Set<string>();
-    items.forEach((recurso) => {
-      if (recurso.categoria) categorias.add(recurso.categoria);
-    });
-    return Array.from(categorias).sort();
-  }, [items]);
+  useEffect(() => {
+    let active = true;
 
-  const unidadesUnicas = useMemo(
-    () => Array.from(new Set(items.map((recurso) => recurso.unidad).filter(Boolean))).sort(),
-    [items],
-  );
+    apiGet<ResourcePage>("/recursos", {
+      activo: true,
+      pagina,
+      limite: PAGE_SIZE,
+      ...(tipoFiltro !== "ALL" ? { tipo: tipoFiltro } : {}),
+      ...(categoriaFiltro !== "ALL" ? { categoria: categoriaFiltro } : {}),
+      ...(busquedaAplicada ? { buscar: busquedaAplicada } : {}),
+    })
+      .then((result) => {
+        if (!active) return;
+        if (result.items.length === 0 && result.total > 0 && pagina > 1) {
+          setPagina(pagina - 1);
+          return;
+        }
+        setItems(result.items);
+        setTotal(result.total);
+        setError("");
+      })
+      .catch(() => {
+        if (active) setError("No se pudieron cargar los recursos.");
+      })
+      .finally(() => {
+        if (active) setConsultaCargada(consultaActual);
+      });
 
-  const recursosFiltrados = useMemo(() => {
-    return items.filter((r) => {
-      const matchTipo = tipoFiltro === "ALL" || r.tipo === tipoFiltro;
-      const matchCat = categoriaFiltro === "ALL" || r.categoria === categoriaFiltro;
-      const texto = busqueda.toLowerCase();
-      const matchTexto =
-        !busqueda ||
-        r.codigo.toLowerCase().includes(texto) ||
-        (r.descripcion || "").toLowerCase().includes(texto) ||
-        (r.categoria || "").toLowerCase().includes(texto);
-      return matchTipo && matchCat && matchTexto;
-    });
-  }, [items, busqueda, tipoFiltro, categoriaFiltro]);
+    return () => {
+      active = false;
+    };
+  }, [pagina, tipoFiltro, categoriaFiltro, busquedaAplicada, recargar, consultaActual]);
+
+  useEffect(() => {
+    let active = true;
+    apiGet<ResourceOptions>("/recursos/opciones")
+      .then((result) => {
+        if (active) setOpciones(result);
+      })
+      .catch(() => {
+        if (active) setError("No se pudieron cargar las opciones de recursos.");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [recargar]);
+
+  const categoriasUnicas = opciones.categorias;
+  const unidadesUnicas = opciones.unidades;
 
   const abrirNuevo = () => {
     setFormulario(formularioVacio());
@@ -162,7 +209,8 @@ export default function Resources() {
       }
       setFormulario(null);
       setEditandoId(null);
-      loadResources();
+      setRecargar((actual) => actual + 1);
+      setPagina(1);
     } catch {
       setErrorAccion(editandoId ? "No se pudo actualizar el recurso." : "No se pudo agregar el recurso.");
     } finally {
@@ -178,7 +226,7 @@ export default function Resources() {
       await api.delete(`/recursos/${recursoAEliminar.id}`);
       setMensaje("Recurso eliminado del catálogo.");
       setRecursoAEliminar(null);
-      loadResources();
+      setRecargar((actual) => actual + 1);
     } catch {
       setErrorAccion("No se pudo eliminar el recurso.");
     } finally {
@@ -192,21 +240,23 @@ export default function Resources() {
         <div>
           <p className="eyebrow">CATÁLOGOS Y PRECIOS</p>
           <h1>Recursos, Mano de Obra, Equipos y Transporte</h1>
-          <p className="muted">Catálogo único de costos del sistema ({items.length} recursos disponibles).</p>
+          <p className="muted">Catálogo único de costos del sistema ({total} recursos disponibles).</p>
         </div>
       </div>
 
       <section className="panel data-panel">
         <div className="panel-heading">
           <div>
-            <h2>Catálogo de recursos ({recursosFiltrados.length})</h2>
+            <h2>Catálogo de recursos ({total})</h2>
             <p>{error || "Cargados automáticamente al iniciar el sistema."}</p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
             <Package size={28} />
-            <button className="primary-button" onClick={abrirNuevo}>
-              <Plus size={16} /> Agregar recurso
-            </button>
+            {canEdit && (
+              <button className="primary-button" onClick={abrirNuevo}>
+                <Plus size={16} /> Agregar recurso
+              </button>
+            )}
           </div>
         </div>
 
@@ -221,7 +271,10 @@ export default function Resources() {
               className="text-input"
               placeholder="Buscar recurso..."
               value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
+              onChange={(e) => {
+                setBusqueda(e.target.value);
+                setPagina(1);
+              }}
             />
           </div>
           <div className="filter-input-wrapper">
@@ -229,7 +282,10 @@ export default function Resources() {
             <select
               className="text-input"
               value={tipoFiltro}
-              onChange={(e) => setTipoFiltro(e.target.value)}
+              onChange={(e) => {
+                setTipoFiltro(e.target.value);
+                setPagina(1);
+              }}
             >
               <option value="ALL">Todos los tipos</option>
               <option value="material">Materiales</option>
@@ -242,7 +298,10 @@ export default function Resources() {
             <select
               className="text-input"
               value={categoriaFiltro}
-              onChange={(e) => setCategoriaFiltro(e.target.value)}
+              onChange={(e) => {
+                setCategoriaFiltro(e.target.value);
+                setPagina(1);
+              }}
             >
               <option value="ALL">Todas las categorías</option>
               {categoriasUnicas.map((cat) => (
@@ -262,11 +321,11 @@ export default function Resources() {
                 <th>Categoría</th>
                 <th>U.M.</th>
                 <th>Precio Unitario</th>
-                <th></th>
+                {canEdit && <th></th>}
               </tr>
             </thead>
             <tbody>
-              {recursosFiltrados.map((x) => (
+              {items.map((x) => (
                 <tr key={x.id}>
                   <td><span className="badge">{x.tipo}</span></td>
                   <td className="code-cell">{x.codigo}</td>
@@ -274,24 +333,52 @@ export default function Resources() {
                   <td>{x.categoria || "—"}</td>
                   <td>{x.unidad}</td>
                   <td>C$ {Number(x.costoUnitario || 0).toFixed(2)}</td>
-                  <td style={{ whiteSpace: "nowrap" }}>
+                  {canEdit && <td style={{ whiteSpace: "nowrap" }}>
                     <button className="text-link" onClick={() => abrirEdicion(x)} style={{ display: "inline-flex", alignItems: "center", gap: "4px", marginRight: "12px" }}>
                       <Edit3 size={14} /> Editar
                     </button>
                     <button className="icon-btn-danger" onClick={() => { setErrorAccion(""); setRecursoAEliminar(x); }} title="Eliminar recurso">
                       <Trash2 size={16} />
                     </button>
-                  </td>
+                  </td>}
                 </tr>
               ))}
-              {!recursosFiltrados.length && (
+              {!cargando && !items.length && (
                 <tr>
-                  <td colSpan={7}>No hay recursos registrados que coincidan con los filtros.</td>
+                  <td colSpan={canEdit ? 7 : 6}>No hay recursos registrados que coincidan con los filtros.</td>
+                </tr>
+              )}
+              {cargando && (
+                <tr>
+                  <td colSpan={canEdit ? 7 : 6}>Cargando recursos...</td>
                 </tr>
               )}
             </tbody>
           </table>
         </HorizontalTable>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 24px" }}>
+          <span>
+            {total === 0
+              ? "Sin recursos"
+              : `Mostrando ${(pagina - 1) * PAGE_SIZE + 1}-${Math.min(pagina * PAGE_SIZE, total)} de ${total}`}
+          </span>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              className="secondary-button"
+              onClick={() => setPagina((actual) => Math.max(1, actual - 1))}
+              disabled={pagina === 1 || cargando}
+            >
+              Anterior
+            </button>
+            <button
+              className="secondary-button"
+              onClick={() => setPagina((actual) => actual + 1)}
+              disabled={pagina * PAGE_SIZE >= total || cargando}
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
       </section>
 
       {formulario && (

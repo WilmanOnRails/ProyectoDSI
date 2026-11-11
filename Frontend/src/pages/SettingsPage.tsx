@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Settings } from "lucide-react";
-import api from "../services/api";
+import api, { apiGet } from "../services/api";
+import { canManagePlatformData } from "../services/authSession";
 
 type Config = {
   empresa?: string;
@@ -25,6 +26,7 @@ const CAMPOS_PORCENTAJE = [
 ] as const;
 
 export default function SettingsPage() {
+  const canEdit = canManagePlatformData();
   const [form, setForm] = useState<Config>({
     moneda: "NIO",
     pctIndirectosDef: 5,
@@ -37,9 +39,8 @@ export default function SettingsPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api
-      .get<Config>("/configuracion")
-      .then((r) => setForm(r.data))
+    apiGet<Config>("/configuracion")
+      .then(setForm)
       .catch(() => setError("No se pudo cargar la configuración."));
   }, []);
 
@@ -91,6 +92,7 @@ export default function SettingsPage() {
                 className="text-input"
                 value={form[k] || ""}
                 onChange={(e) => change(k, e.target.value)}
+                readOnly={!canEdit}
               />
             </label>
           ))}
@@ -109,14 +111,17 @@ export default function SettingsPage() {
                 step="0.01"
                 value={form[k]}
                 onChange={(e) => change(k, e.target.value)}
+                readOnly={!canEdit}
               />
             </label>
           ))}
         </div>
 
-        <button className="primary-button" onClick={() => void save()}>
-          Guardar configuración
-        </button>
+        {canEdit && (
+          <button className="primary-button" onClick={() => void save()}>
+            Guardar configuración
+          </button>
+        )}
         {mensaje && <div className="import-success">{mensaje}</div>}
         {error && <div className="import-error">{error}</div>}
       </section>

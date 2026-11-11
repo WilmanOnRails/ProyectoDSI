@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, TipoRecurso } from '@prisma/client';
 import {
+  crearApuAutomaticoEnTransaccion,
   recalcularCacheApu,
   sincronizarPresupuestosApu,
 } from './apu-automatico.js';
@@ -80,6 +81,8 @@ export class ApusService {
 
   /** Obtiene la receta completa de una actividad junto con su costo en caché. */
   async obtenerApuPorActividad(actividadId: string) {
+    await this.generarApuSiHaceFalta(actividadId);
+
     const actividad = await this.prisma.actividad.findUnique({
       where: { id: actividadId },
       include: {
@@ -97,6 +100,56 @@ export class ApusService {
     }
 
     return actividad;
+  }
+
+  private async generarApuSiHaceFalta(actividadId: string) {
+    await this.prisma.$transaction(
+      async (tx) => {
+        const actividad = await tx.actividad.findUnique({
+          where: { id: actividadId },
+          select: {
+            id: true,
+            nombre: true,
+            unidad: true,
+            apuDetalles: { select: { id: true }, take: 1 },
+            presupuestoItems: {
+              orderBy: { orden: 'asc' },
+              take: 1,
+              select: { cantidadProyecto: true },
+            },
+          },
+        });
+
+        if (!actividad) {
+          throw new NotFoundException(
+            `Actividad con ID ${actividadId} no encontrada`,
+          );
+        }
+        if (actividad.apuDetalles.length > 0) return;
+
+        const recursos = await tx.recurso.findMany({
+          where: { activo: true },
+          select: {
+            id: true,
+            tipo: true,
+            descripcion: true,
+            costoUnitario: true,
+          },
+        });
+        const resultado = await crearApuAutomaticoEnTransaccion(
+          tx,
+          actividad,
+          recursos,
+          actividad.presupuestoItems[0]?.cantidadProyecto ?? 1,
+        );
+        await sincronizarPresupuestosApu(
+          tx,
+          actividadId,
+          resultado.cache,
+        );
+      },
+      { timeout: 30000, maxWait: 10000 },
+    );
   }
 
   async update(id: string, updateApusDto: UpdateApusDto) {

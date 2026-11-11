@@ -12,6 +12,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AgregarItemDto } from './dto/agregar-item.dto.js';
 import { CreatePresupuestoDto } from './dto/create-presupuesto.dto.js';
+import { QueryPresupuestoResumenDto } from './dto/query-presupuesto-resumen.dto.js';
 import { UpdatePresupuestoDto } from './dto/update-presupuesto.dto.js';
 
 /** Porcentajes que vienen SIEMPRE del módulo de Configuración. */
@@ -101,6 +102,65 @@ export class PresupuestosService {
 
     const porcentajes = this.porcentajesDesdeConfig(config);
     return presupuestos.map((p) => this.conResumenCalculado(p, porcentajes));
+  }
+
+  async findAllResumidos(query: QueryPresupuestoResumenDto = {}) {
+    const paginar =
+      query.pagina !== undefined || query.limite !== undefined;
+    const pagina = query.pagina ?? 1;
+    const limite = query.limite ?? 25;
+    const seleccion = {
+      select: {
+        id: true,
+        nombre: true,
+        numero: true,
+        total: true,
+        proyecto: {
+          select: { nombre: true },
+        },
+        _count: {
+          select: { items: true },
+        },
+      },
+      orderBy: { fecha: 'desc' },
+    } satisfies Prisma.PresupuestoFindManyArgs;
+
+    if (!paginar) {
+      const presupuestos = await this.prisma.presupuesto.findMany(seleccion);
+      return this.presupuestosResumidos(presupuestos);
+    }
+
+    const [presupuestos, total] = await Promise.all([
+      this.prisma.presupuesto.findMany({
+        ...seleccion,
+        skip: (pagina - 1) * limite,
+        take: limite,
+      }),
+      this.prisma.presupuesto.count(),
+    ]);
+
+    return {
+      items: this.presupuestosResumidos(presupuestos),
+      total,
+      pagina,
+      limite,
+    };
+  }
+
+  private presupuestosResumidos(
+    presupuestos: Array<{
+      id: string;
+      nombre: string | null;
+      numero: string | null;
+      total: Prisma.Decimal;
+      proyecto: { nombre: string };
+      _count: { items: number };
+    }>,
+  ) {
+    return presupuestos.map(({ _count, ...presupuesto }) => ({
+      ...presupuesto,
+      cantidadActividades: _count.items,
+    }));
   }
 
   async findOne(id: string) {

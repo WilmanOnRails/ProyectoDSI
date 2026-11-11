@@ -1,11 +1,13 @@
 import { useEffect, useState, type ChangeEvent } from "react";
 import { FileUp, LoaderCircle, Trash2 } from "lucide-react";
-import api from "../services/api";
+import api, { apiGet } from "../services/api";
+import { canManagePlatformData } from "../services/authSession";
 
 type Proyecto = { id: string; codigo?: string; nombre: string; cliente?: string; ubicacion?: string; estado?: string; };
 type Resultado = { mensaje: string; proyecto: Proyecto; presupuesto: { id: string; nombre: string; cantidadActividades: number }; paginasProcesadas: number };
 
 export default function Projects() {
+  const canEdit = canManagePlatformData();
   const [proyectos, setProyectos] = useState<Proyecto[]>([]);
   const [archivo, setArchivo] = useState<File | null>(null);
   const [nombrePresupuesto, setNombrePresupuesto] = useState("Presupuesto base - PLIEGO_1");
@@ -16,7 +18,7 @@ export default function Projects() {
 
   const cargarProyectos = async () => {
     try {
-      setProyectos((await api.get<Proyecto[]>("/projects")).data);
+      setProyectos(await apiGet<Proyecto[]>("/projects"));
     } catch {
       setError("No se pudieron cargar los proyectos.");
     }
@@ -74,7 +76,7 @@ export default function Projects() {
         </div>
       </div>
 
-      <section className="panel import-card">
+      {canEdit && <section className="panel import-card">
         <div className="panel-heading">
           <div>
             <h2>Importar pliego PDF</h2>
@@ -102,7 +104,7 @@ export default function Projects() {
             </ul>
           </div>
         )}
-      </section>
+      </section>}
 
       <section className="panel data-panel">
         <div className="panel-heading">
@@ -119,7 +121,7 @@ export default function Projects() {
                 <th>Cliente</th>
                 <th>Ubicación</th>
                 <th>Estado</th>
-                <th></th>
+                {canEdit && <th></th>}
               </tr>
             </thead>
             <tbody>
@@ -129,16 +131,16 @@ export default function Projects() {
                   <td>{p.cliente || "—"}</td>
                   <td>{p.ubicacion || "—"}</td>
                   <td><span className="status status-en-proceso">{p.estado || "En elaboración"}</span></td>
-                  <td>
+                  {canEdit && <td>
                     <button className="icon-btn-danger" onClick={() => setProyectoAEliminar(p)} title="Eliminar proyecto">
                       <Trash2 size={16} />
                     </button>
-                  </td>
+                  </td>}
                 </tr>
               ))}
               {!proyectos.length && (
                 <tr>
-                  <td colSpan={5}>No hay proyectos registrados.</td>
+                  <td colSpan={canEdit ? 5 : 4}>No hay proyectos registrados.</td>
                 </tr>
               )}
             </tbody>

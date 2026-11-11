@@ -11,6 +11,7 @@ const pageTitles: Record<string, string> = {
     "/presupuestos": "Presupuestos",
     "/recursos": "Recursos y precios",
     "/configuracion": "Configuración",
+    "/usuarios": "Gestión de usuarios",
 };
 
 export default function DashboardLayout() {

@@ -13,6 +13,8 @@ import { RecursosModule } from './recursos/recursos.module.js';
 import { PresupuestosModule } from './presupuestos/presupuestos.module.js';
 import { ScrapingModule } from './scraping/scraping.module.js';
 import { ImportacionesModule } from './importaciones/importaciones.module.js';
+import { DashboardModule } from './dashboard/dashboard.module.js';
+import { AccessControlModule } from './auth/access-control.module.js';
 
 @Module({
   imports: [
@@ -32,8 +34,9 @@ import { ImportacionesModule } from './importaciones/importaciones.module.js';
     PresupuestosModule,
     ScrapingModule,
     ImportacionesModule,
+    DashboardModule,
+    AccessControlModule,
   ],
   controllers: [HealthController],
 })
 export class AppModule { }
-

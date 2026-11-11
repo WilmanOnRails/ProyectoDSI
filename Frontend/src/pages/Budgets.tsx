@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { Download, FileSpreadsheet } from "lucide-react";
-import api from "../services/api";
+import api, { apiGet } from "../services/api";
 import HorizontalTable from "../components/HorizontalTable";
 
 type Item = {
@@ -48,6 +48,19 @@ type Budget = {
   items?: Item[];
 };
 
+type BudgetSummary = Pick<Budget, "id" | "nombre" | "numero" | "total" | "proyecto"> & {
+  cantidadActividades: number;
+};
+
+type BudgetSummaryPage = {
+  items: BudgetSummary[];
+  total: number;
+  pagina: number;
+  limite: number;
+};
+
+const PAGE_SIZE = 25;
+
 const money = (v: string | number) =>
   `C$ ${Number(v || 0).toLocaleString("es-NI", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const unitMoney = (v: string | number) => {
@@ -94,25 +107,41 @@ const totalTrItem = (item: Item) =>
   lineTotal(item, item.totalTransporte, item.puTransporte, item.costoTransporteCong);
 
 export default function Budgets() {
-  const [items, setItems] = useState<Budget[]>([]);
+  const [items, setItems] = useState<BudgetSummary[]>([]);
+  const [totalBudgets, setTotalBudgets] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loadedPage, setLoadedPage] = useState<number | null>(null);
   const [selected, setSelected] = useState<Budget | null>(null);
   const [error, setError] = useState("");
-
-  const loadBudgets = () => {
-    api
-      .get<Budget[]>("/presupuestos")
-      .then((r) => setItems(r.data))
-      .catch(() => setError("No se pudieron cargar los presupuestos."));
-  };
+  const loading = loadedPage !== page;
 
   useEffect(() => {
-    loadBudgets();
-  }, []);
+    let active = true;
+    apiGet<BudgetSummaryPage>("/presupuestos/resumen", {
+      pagina: page,
+      limite: PAGE_SIZE,
+    })
+      .then((result) => {
+        if (!active) return;
+        setItems(result.items);
+        setTotalBudgets(result.total);
+        setError("");
+      })
+      .catch(() => {
+        if (active) setError("No se pudieron cargar los presupuestos.");
+      })
+      .finally(() => {
+        if (active) setLoadedPage(page);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [page]);
 
   const open = async (id: string) => {
     try {
-      const res = await api.get<Budget>(`/presupuestos/${id}`);
-      setSelected(res.data);
+      setSelected(await apiGet<Budget>(`/presupuestos/${id}`));
       setError("");
     } catch {
       setError("No se pudo cargar el detalle del presupuesto.");
@@ -180,7 +209,7 @@ export default function Budgets() {
       <section className="panel data-panel">
         <div className="panel-heading">
           <div>
-            <h2>Presupuestos registrados ({items.length})</h2>
+            <h2>Presupuestos registrados ({totalBudgets})</h2>
             <p>{error || "Seleccioná un presupuesto para ver el desglose completo."}</p>
           </div>
           <FileSpreadsheet size={28} />
@@ -201,7 +230,7 @@ export default function Budgets() {
                 <tr key={x.id}>
                   <td>{x.nombre || "Sin nombre"}</td>
                   <td>{x.proyecto?.nombre || "—"}</td>
-                  <td>{x.items?.length || 0}</td>
+                  <td>{x.cantidadActividades}</td>
                   <td><strong>{money(x.total)}</strong></td>
                   <td>
                     <button className="text-link" onClick={() => void open(x.id)}>
@@ -210,14 +239,42 @@ export default function Budgets() {
                   </td>
                 </tr>
               ))}
-              {!items.length && (
+              {!loading && !items.length && (
                 <tr>
                   <td colSpan={5}>No hay presupuestos registrados.</td>
+                </tr>
+              )}
+              {loading && (
+                <tr>
+                  <td colSpan={5}>Cargando presupuestos...</td>
                 </tr>
               )}
             </tbody>
           </table>
         </HorizontalTable>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 24px" }}>
+          <span>
+            {totalBudgets === 0
+              ? "Sin presupuestos"
+              : `Mostrando ${(page - 1) * PAGE_SIZE + 1}-${Math.min(page * PAGE_SIZE, totalBudgets)} de ${totalBudgets}`}
+          </span>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              className="secondary-button"
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page === 1 || loading}
+            >
+              Anterior
+            </button>
+            <button
+              className="secondary-button"
+              onClick={() => setPage((current) => current + 1)}
+              disabled={page * PAGE_SIZE >= totalBudgets || loading}
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
       </section>
 
       {selected && (

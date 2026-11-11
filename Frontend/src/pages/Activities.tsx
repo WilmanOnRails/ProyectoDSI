@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { Pencil, Plus, Trash2, Search, Filter, FolderKanban } from "lucide-react";
-import api from "../services/api";
+import api, { apiGet } from "../services/api";
 import HorizontalTable from "../components/HorizontalTable";
+import { canManagePlatformData } from "../services/authSession";
 
 type Activity = {
   id: string;
@@ -89,8 +90,10 @@ type ActivityApuData = Activity & {
 
 const money = (v: string | number) =>
   `C$ ${Number(v || 0).toLocaleString("es-NI", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const PAGE_SIZE = 50;
 
 export default function Activities() {
+  const canEdit = canManagePlatformData();
   const [items, setItems] = useState<Activity[]>([]);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [budgets, setBudgets] = useState<BudgetOption[]>([]);
@@ -116,13 +119,39 @@ export default function Activities() {
   const [proyectoFiltro, setProyectoFiltro] = useState<string>("ALL");
   const [busquedaRecurso, setBusquedaRecurso] = useState("");
   const [categoriaFiltro, setCategoriaFiltro] = useState("ALL");
+  const [resourceSearchApplied, setResourceSearchApplied] = useState("");
+  const activityQueryKey = JSON.stringify([
+    page,
+    proyectoFiltro,
+    reloadCounter,
+  ]);
+  const activitiesLoading = loadedActivityQuery !== activityQueryKey;
+  const selectedActivityId = selected?.id;
 
-  const loadActivities = () => {
-    api
-      .get<Activity[]>("/activities")
-      .then((r) => setItems(r.data))
-      .catch(() => setError("No se pudieron cargar las actividades."));
-  };
+  useEffect(() => {
+    let active = true;
+    const params = {
+      pagina: page,
+      limite: PAGE_SIZE,
+      ...(proyectoFiltro !== "ALL" ? { proyectoId: proyectoFiltro } : {}),
+    };
+    const request =
+      reloadCounter === 0
+        ? apiGet<ActivityPage>("/activities", params)
+        : api.get<ActivityPage>("/activities", { params }).then(({ data }) => data);
+
+    request
+      .then((result) => {
+        if (!active) return;
+        setItems(result.items);
+        setTotalActivities(result.total);
+      })
+      .catch(() => {
+        if (active) setError("No se pudieron cargar las actividades.");
+      })
+      .finally(() => {
+        if (active) setLoadedActivityQuery(activityQueryKey);
+      });
 
   const loadProjectsAndBudgets = () => {
     Promise.all([
@@ -184,8 +213,8 @@ export default function Activities() {
 
   const openApu = async (id: string, shouldScroll = false) => {
     try {
-      const res = await api.get<ActivityApuData>(`/apus/actividad/${id}`);
-      setSelected(res.data);
+      const data = await apiGet<ActivityApuData>(`/apus/actividad/${id}`);
+      setSelected(data);
       setScrollToApu(shouldScroll);
       setError("");
       setMensaje("");
@@ -197,7 +226,6 @@ export default function Activities() {
   useEffect(() => {
     if (!selected || !scrollToApu) return;
     apuDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    setScrollToApu(false);
   }, [selected, scrollToApu]);
 
   const addApuItem = async () => {
@@ -215,9 +243,11 @@ export default function Activities() {
       setMensaje("Recurso agregado al APU correctamente.");
       setRecursoId("");
       setCantidad("1");
+      reloadActivities();
       await openApu(selected.id);
-    } catch (err: any) {
-      setError(err?.response?.data?.message || "No se pudo agregar el recurso al APU.");
+    } catch (err: unknown) {
+      const apiError = err as { response?: { data?: { message?: string } } };
+      setError(apiError.response?.data?.message || "No se pudo agregar el recurso al APU.");
     }
   };
 
@@ -226,6 +256,7 @@ export default function Activities() {
     try {
       await api.delete(`/apus/${apuId}`);
       setMensaje("Recurso eliminado del APU.");
+      reloadActivities();
       await openApu(selected.id);
     } catch {
       setError("No se pudo eliminar el recurso del APU.");
@@ -512,8 +543,8 @@ export default function Activities() {
       <section className="panel data-panel">
         <div className="panel-heading">
           <div>
-            <h2>Actividades registradas ({actividadesFiltradas.length} de {items.length})</h2>
-            <p>{error || mensaje || "Seleccioná una actividad para configurar sus costos unitarios."}</p>
+            <h2>Actividades registradas ({totalActivities})</h2>
+            <p>{error || mensaje || (canEdit ? "Seleccioná una actividad para configurar sus costos unitarios." : "Seleccioná una actividad para consultar sus costos unitarios.")}</p>
           </div>
           <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
             <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "center" }}>
@@ -572,7 +603,7 @@ export default function Activities() {
                     <td><span className="project-badge">{nombreProyecto}</span></td>
                     <td>
                       <button className="text-link" onClick={() => void openApu(x.id, true)}>
-                        Configurar APU
+                        {canEdit ? "Configurar APU" : "Ver APU"}
                       </button>
                       <button
                         className="text-link"
@@ -594,14 +625,42 @@ export default function Activities() {
                   </tr>
                 );
               })}
-              {!actividadesFiltradas.length && (
+              {!activitiesLoading && !items.length && (
                 <tr>
                   <td colSpan={6}>No hay actividades registradas.</td>
+                </tr>
+              )}
+              {activitiesLoading && (
+                <tr>
+                  <td colSpan={6}>Cargando actividades...</td>
                 </tr>
               )}
             </tbody>
           </table>
         </HorizontalTable>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 24px" }}>
+          <span>
+            {totalActivities === 0
+              ? "Sin actividades"
+              : `Mostrando ${(page - 1) * PAGE_SIZE + 1}-${Math.min(page * PAGE_SIZE, totalActivities)} de ${totalActivities}`}
+          </span>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              className="secondary-button"
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page === 1 || activitiesLoading}
+            >
+              Anterior
+            </button>
+            <button
+              className="secondary-button"
+              onClick={() => setPage((current) => current + 1)}
+              disabled={page * PAGE_SIZE >= totalActivities || activitiesLoading}
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
       </section>
 
       {selected && (
@@ -674,7 +733,7 @@ export default function Activities() {
             </div>
           </div>
 
-          <div className="apu-form-grid">
+          {canEdit && <div className="apu-form-grid">
             <label>
               {tipoSeccion === "material" ? "Seleccionar Material" :
                tipoSeccion === "mano_obra" ? "Seleccionar Cargo / Mano de Obra" : "Seleccionar Equipo / Transporte"} ({recursosDisponibles.length} disponibles)
@@ -702,7 +761,7 @@ export default function Activities() {
             <button className="primary-button add-apu-btn" onClick={() => void addApuItem()}>
               <Plus size={16} /> Agregar a la partida
             </button>
-          </div>
+          </div>}
 
           {mensaje && <div className="import-success">{mensaje}</div>}
           {error && <div className="import-error">{error}</div>}
@@ -719,7 +778,7 @@ export default function Activities() {
                   <th>Cant. / Unidad de actividad</th>
                   <th>Precio Unitario</th>
                   <th>Subtotal</th>
-                  <th></th>
+                  {canEdit && <th></th>}
                 </tr>
               </thead>
               <tbody>
@@ -741,12 +800,12 @@ export default function Activities() {
                         <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
                           <Trash2 size={16} />
                         </button>
-                      </td>
+                      </td>}
                     </tr>
                   );
                 })}
                 {!detallesMateriales.length && (
-                  <tr><td colSpan={7}>No hay materiales agregados en este APU.</td></tr>
+                  <tr><td colSpan={canEdit ? 7 : 6}>No hay materiales agregados en este APU.</td></tr>
                 )}
               </tbody>
             </table>
@@ -764,7 +823,7 @@ export default function Activities() {
                   <th>Horas-Hombre (HH) / unidad</th>
                   <th>Salario x Hora</th>
                   <th>Monto Total</th>
-                  <th></th>
+                  {canEdit && <th></th>}
                 </tr>
               </thead>
               <tbody>
@@ -786,12 +845,12 @@ export default function Activities() {
                         <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
                           <Trash2 size={16} />
                         </button>
-                      </td>
+                      </td>}
                     </tr>
                   );
                 })}
                 {!detallesManoDeObra.length && (
-                  <tr><td colSpan={7}>No hay mano de obra agregada en este APU.</td></tr>
+                  <tr><td colSpan={canEdit ? 7 : 6}>No hay mano de obra agregada en este APU.</td></tr>
                 )}
               </tbody>
             </table>
@@ -809,7 +868,7 @@ export default function Activities() {
                   <th>Horas-Máquina (HM) / unidad o viajes</th>
                   <th>Renta Horaria</th>
                   <th>Monto Total</th>
-                  <th></th>
+                  {canEdit && <th></th>}
                 </tr>
               </thead>
               <tbody>
@@ -831,12 +890,12 @@ export default function Activities() {
                         <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
                           <Trash2 size={16} />
                         </button>
-                      </td>
+                      </td>}
                     </tr>
                   );
                 })}
                 {!detallesEquiposTransporte.length && (
-                  <tr><td colSpan={7}>No hay equipos ni transporte agregados en este APU.</td></tr>
+                  <tr><td colSpan={canEdit ? 7 : 6}>No hay equipos ni transporte agregados en este APU.</td></tr>
                 )}
               </tbody>
             </table>

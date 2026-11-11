@@ -5,6 +5,7 @@ import {
   Post,
   UploadedFile,
   UseInterceptors,
+  UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -16,6 +17,8 @@ import {
 } from '@nestjs/swagger';
 import { IsOptional, IsString, MaxLength } from 'class-validator';
 import { ImportacionesService } from './importaciones.service.js';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
+import { WriteAccessGuard } from '../auth/guards/write-access.guard.js';
 
 type ArchivoSubido = {
   buffer: Buffer;
@@ -43,6 +46,7 @@ export class ImportacionesController {
   ) {}
 
   @Post('pliego-pdf')
+  @UseGuards(JwtAuthGuard, WriteAccessGuard)
   @ApiOperation({
     summary:
       'Extrae actividades, cantidades y unidades de un pliego PDF y crea un proyecto y presupuesto nuevos',

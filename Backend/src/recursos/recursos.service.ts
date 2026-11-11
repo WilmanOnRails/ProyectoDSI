@@ -92,7 +92,7 @@ export class RecursosService implements OnModuleInit {
     );
   }
 
-  findAll(query: QueryRecursoDto) {
+  async findAll(query: QueryRecursoDto) {
     const where: Prisma.RecursoWhereInput = {};
 
     if (query.tipo) {
@@ -101,18 +101,74 @@ export class RecursosService implements OnModuleInit {
     if (query.activo !== undefined) {
       where.activo = query.activo === 'true';
     }
+    if (query.categoria) {
+      where.categoria = query.categoria;
+    }
     if (query.buscar) {
       where.OR = [
         { codigo: { contains: query.buscar, mode: 'insensitive' } },
         { descripcion: { contains: query.buscar, mode: 'insensitive' } },
+        { categoria: { contains: query.buscar, mode: 'insensitive' } },
         { nombreProveedor: { contains: query.buscar, mode: 'insensitive' } },
       ];
     }
 
-    return this.prisma.recurso.findMany({
-      where,
-      orderBy: [{ tipo: 'asc' }, { codigo: 'asc' }],
-    });
+    const paginationRequested =
+      query.pagina !== undefined || query.limite !== undefined;
+    if (!paginationRequested) {
+      return this.prisma.recurso.findMany({
+        where,
+        orderBy: [{ tipo: 'asc' }, { codigo: 'asc' }],
+      });
+    }
+
+    const pagina = query.pagina ?? 1;
+    const limite = query.limite ?? 50;
+    const [items, total] = await Promise.all([
+      this.prisma.recurso.findMany({
+        where,
+        select: {
+          id: true,
+          codigo: true,
+          tipo: true,
+          categoria: true,
+          descripcion: true,
+          unidad: true,
+          costoUnitario: true,
+          proveedor: true,
+        },
+        orderBy: [{ tipo: 'asc' }, { codigo: 'asc' }],
+        skip: (pagina - 1) * limite,
+        take: limite,
+      }),
+      this.prisma.recurso.count({ where }),
+    ]);
+
+    return { items, total, pagina, limite };
+  }
+
+  async obtenerOpciones() {
+    const [categorias, unidades] = await Promise.all([
+      this.prisma.recurso.findMany({
+        where: { activo: true, categoria: { not: null } },
+        select: { categoria: true },
+        distinct: ['categoria'],
+        orderBy: { categoria: 'asc' },
+      }),
+      this.prisma.recurso.findMany({
+        where: { activo: true },
+        select: { unidad: true },
+        distinct: ['unidad'],
+        orderBy: { unidad: 'asc' },
+      }),
+    ]);
+
+    return {
+      categorias: categorias.flatMap((item) =>
+        item.categoria ? [item.categoria] : [],
+      ),
+      unidades: unidades.map((item) => item.unidad),
+    };
   }
 
   async findOne(id: string) {
