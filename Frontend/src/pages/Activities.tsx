@@ -700,6 +700,8 @@ export default function Activities() {
       setError(
         message || "No se pudo completar la edición. Si se cambió el precio, verifica el catálogo de recursos.",
       );
+    } finally {
+      setGuardandoEdicion(false);
     }
   };
 
