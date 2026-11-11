@@ -16,8 +16,12 @@ import { ImportacionesModule } from './importaciones/importaciones.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { AccessControlModule } from './auth/access-control.module.js';
 import * as path from 'path';
-import { join } from 'path';
+import { fileURLToPath } from 'url';
+import { join, dirname } from 'path';
 import { ServeStaticModule } from '@nestjs/serve-static';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 @Module({
   imports: [
