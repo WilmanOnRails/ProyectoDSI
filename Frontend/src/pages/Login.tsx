@@ -143,7 +143,7 @@ export default function Login() {
                         PLANIFICÁ CON PRECISIÓN
                     </p>
                     <h1>
-                        Cada gran obra
+                        Cada gran pene
                         <br />
                         comienza con
                         <br />
