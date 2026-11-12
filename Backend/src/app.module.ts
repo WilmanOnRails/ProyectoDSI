@@ -15,12 +15,18 @@ import { ScrapingModule } from './scraping/scraping.module.js';
 import { ImportacionesModule } from './importaciones/importaciones.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { AccessControlModule } from './auth/access-control.module.js';
+import { ServeStaticModule } from '@nestjs/serve-static';
+import { resolve } from 'node:path';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+    }),
+    ServeStaticModule.forRoot({
+      rootPath: resolve(process.cwd(), '../frontend/dist'),
+      exclude: ['/api/{*path}'],
     }),
     PrismaModule,
     UsersModule,
