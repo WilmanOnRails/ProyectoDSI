@@ -15,23 +15,18 @@ import { ScrapingModule } from './scraping/scraping.module.js';
 import { ImportacionesModule } from './importaciones/importaciones.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { AccessControlModule } from './auth/access-control.module.js';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
-import { join, dirname } from 'path';
 import { ServeStaticModule } from '@nestjs/serve-static';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import { resolve } from 'node:path';
 
 @Module({
   imports: [
-    ServeStaticModule.forRoot({
-      rootPath: join(__dirname, '../../public'),
-      serveRoot: '/',
-    }),
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: path.resolve(process.cwd(), '.env'),
+      envFilePath: '.env',
+    }),
+    ServeStaticModule.forRoot({
+      rootPath: resolve(process.cwd(), '../frontend/dist'),
+      exclude: ['/api/{*path}'],
     }),
     PrismaModule,
     UsersModule,

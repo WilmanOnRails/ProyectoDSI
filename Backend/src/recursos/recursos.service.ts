@@ -808,55 +808,60 @@ export class RecursosService implements OnModuleInit {
   }): Promise<boolean> {
     for (let intento = 0; intento < 3; intento++) {
       try {
-        return await this.prisma.$transaction(async (tx) => {
-          const existentes = await tx.recurso.findMany({
-            where: {
-              tipo: recurso.tipo,
-            },
-            select: { id: true, descripcion: true },
-          });
-          const clave = (descripcion: string) =>
-            descripcion.toLocaleLowerCase().normalize('NFD')
-              .replace(/[\u0300-\u036f]/g, '');
-          const aliases: Record<string, string[]> = {
-            'Retroexcavadora de movimiento de tierra': [
-              'Retroexcavadora (referencia Excel)',
-            ],
-          };
-          const nombresAnteriores = [
-            `${recurso.descripcion} (referencia Excel)`,
-            ...(aliases[recurso.descripcion] ?? []),
-          ].map(clave);
-          const existente = existentes.find(
-            (item) =>
-              clave(item.descripcion) === clave(recurso.descripcion) ||
-              nombresAnteriores.includes(clave(item.descripcion)),
-          );
-          if (existente) {
-            if (existente.descripcion !== recurso.descripcion) {
-              await tx.recurso.update({
-                where: { id: existente.id },
-                data: { descripcion: recurso.descripcion },
-              });
+        return await this.prisma.$transaction(
+          async (tx) => {
+            const existentes = await tx.recurso.findMany({
+              where: {
+                tipo: recurso.tipo,
+              },
+              select: { id: true, descripcion: true },
+            });
+            const clave = (descripcion: string) =>
+              descripcion
+                .toLocaleLowerCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '');
+            const aliases: Record<string, string[]> = {
+              'Retroexcavadora de movimiento de tierra': [
+                'Retroexcavadora (referencia Excel)',
+              ],
+            };
+            const nombresAnteriores = [
+              `${recurso.descripcion} (referencia Excel)`,
+              ...(aliases[recurso.descripcion] ?? []),
+            ].map(clave);
+            const existente = existentes.find(
+              (item) =>
+                clave(item.descripcion) === clave(recurso.descripcion) ||
+                nombresAnteriores.includes(clave(item.descripcion)),
+            );
+            if (existente) {
+              if (existente.descripcion !== recurso.descripcion) {
+                await tx.recurso.update({
+                  where: { id: existente.id },
+                  data: { descripcion: recurso.descripcion },
+                });
+              }
+              return false;
             }
-            return false;
-          }
 
-          const creado = await tx.recurso.create({
-            data: {
-              ...recurso,
-              codigo: await this.generarCodigo(tx, recurso.tipo),
-            },
-          });
-          await tx.historialPrecio.create({
-            data: {
-              recursoId: creado.id,
-              precio: recurso.costoUnitario,
-              fuente: recurso.fuente,
-            },
-          });
-          return true;
-        });
+            const creado = await tx.recurso.create({
+              data: {
+                ...recurso,
+                codigo: await this.generarCodigo(tx, recurso.tipo),
+              },
+            });
+            await tx.historialPrecio.create({
+              data: {
+                recursoId: creado.id,
+                precio: recurso.costoUnitario,
+                fuente: recurso.fuente,
+              },
+            });
+            return true;
+          },
+          { maxWait: 10_000, timeout: 30_000 },
+        );
       } catch (error) {
         if (this.esConflictoCodigo(error) && intento < 2) continue;
         throw this.traducirErrorPrisma(error);
