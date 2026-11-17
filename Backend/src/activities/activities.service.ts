@@ -7,8 +7,8 @@ import {
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import {
+  calcularLineaDesdeApu,
   calcularResumenPresupuesto,
-  calcularTotalesLinea,
 } from '../calculos/calculos.js';
 import { CreateActivityDto } from './dto/create-activity.dto.js';
 import { QueryActivityDto } from './dto/query-activity.dto.js';
@@ -88,27 +88,15 @@ export class ActivitiesService implements OnModuleInit {
           actividad,
           recursos,
         );
-        const totales = calcularTotalesLinea({
-          cantidadProyecto,
-          costoUnitarioCongelado: resultado.cache.costoTotal,
-          costoMaterialesCong: resultado.cache.costoMateriales,
-          costoManoObraCong: resultado.cache.costoManoObra,
-          costoEquipoCong: resultado.cache.costoEquipo,
-          costoTransporteCong: resultado.cache.costoTransporte,
-          total: resultado.cache.costoTotal,
-        });
+        // Copia el importe congelado del APU a la línea del presupuesto.
+        const totales = calcularLineaDesdeApu(resultado.cache);
 
         await tx.presupuestoItem.create({
           data: {
             presupuestoId,
             actividadId: actividad.id,
             cantidadProyecto,
-            costoUnitarioCongelado: resultado.cache.costoTotal,
-            costoMaterialesCong: resultado.cache.costoMateriales,
-            costoManoObraCong: resultado.cache.costoManoObra,
-            costoEquipoCong: resultado.cache.costoEquipo,
-            costoTransporteCong: resultado.cache.costoTransporte,
-            total: totales.sumaTotal,
+            ...totales,
           },
         });
         await this.recalcularPresupuesto(tx, presupuestoId);

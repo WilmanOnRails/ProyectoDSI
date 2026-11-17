@@ -1,13 +1,12 @@
 import {
   ConflictException,
   Injectable,
-  Logger,
   NotFoundException,
-  OnModuleInit,
 } from '@nestjs/common';
 import { Prisma, TipoRecurso } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { calcularApu } from '../calculos/calculos.js';
+import { sincronizarPresupuestosDeActividades } from '../presupuestos/recalculo-presupuesto.js';
 import { CambiarPrecioDto } from './dto/cambiar-precio.dto.js';
 import { CreateRecursoDto } from './dto/create-recurso.dto.js';
 import {
@@ -19,21 +18,8 @@ import { QueryRecursoDto } from './dto/query-recurso.dto.js';
 import { UpdateRecursoDto } from './dto/update-recurso.dto.js';
 
 @Injectable()
-export class RecursosService implements OnModuleInit {
-  private readonly logger = new Logger(RecursosService.name);
-
+export class RecursosService {
   constructor(private readonly prisma: PrismaService) {}
-
-  async onModuleInit() {
-    try {
-      await this.seedDefaults();
-    } catch (error) {
-      this.logger.error(
-        'No se pudieron cargar los recursos predeterminados',
-        error instanceof Error ? error.stack : String(error),
-      );
-    }
-  }
 
   /** Prefijo del código según el tipo de recurso (como en el Figma). */
   private readonly prefijos: Record<TipoRecurso, string> = {
@@ -259,67 +245,40 @@ export class RecursosService implements OnModuleInit {
         ];
 
         for (const actividadId of idsActividades) {
-          // Traer TODOS los detalles de la receta de esta actividad
           const receta = await tx.apuDetalle.findMany({
             where: { actividadId },
-            include: { recurso: { select: { costoUnitario: true } } },
-          });
-
-          // Armar el mapa de precios actuales
-          const preciosMapa: Record<string, Prisma.Decimal> = {};
-          const detallesParaCalculo = receta.map((det) => {
-            preciosMapa[det.recursoId] = det.recurso.costoUnitario;
-            return {
-              recursoId: det.recursoId,
-              tipo: det.recursoId === id ? 'tipo_determinado' : 'material', // se resolverá bien con el tipo del recurso si lo incluimos
-              cantidadPorUnidad: det.cantidadPorUnidad,
-            };
-          });
-
-          // Necesitamos también el tipo del recurso en cada detalle
-          const recetaCompleta = await tx.apuDetalle.findMany({
-            where: { actividadId },
             include: {
-              recurso: { select: { id: true, tipo: true, costoUnitario: true } },
+              recurso: { select: { tipo: true, costoUnitario: true } },
             },
           });
 
           const preciosMap: Record<string, Prisma.Decimal> = {};
-          const detallesCalculo = recetaCompleta.map((det) => {
-            preciosMap[det.recursoId] = det.recurso.costoUnitario;
+          const detallesCalculo = receta.map((detalle) => {
+            preciosMap[detalle.recursoId] = detalle.recurso.costoUnitario;
             return {
-              recursoId: det.recursoId,
-              tipo: det.recurso.tipo,
-              cantidadPorUnidad: det.cantidadPorUnidad,
+              recursoId: detalle.recursoId,
+              tipo: detalle.recurso.tipo,
+              cantidadPorUnidad: detalle.cantidadPorUnidad,
             };
           });
 
           const costoCalculado = calcularApu(detallesCalculo, preciosMap);
+          const fechaCalculo = new Date();
 
           await tx.apuCostoCache.upsert({
             where: { actividadId },
-            update: {
-              costoMateriales: costoCalculado.costoMateriales,
-              costoManoObra: costoCalculado.costoManoObra,
-              costoEquipo: costoCalculado.costoEquipo,
-              costoTransporte: costoCalculado.costoTransporte,
-              costoTotal: costoCalculado.costoTotal,
-              fechaCalculo: new Date(),
-            },
-            create: {
-              actividadId,
-              costoMateriales: costoCalculado.costoMateriales,
-              costoManoObra: costoCalculado.costoManoObra,
-              costoEquipo: costoCalculado.costoEquipo,
-              costoTransporte: costoCalculado.costoTransporte,
-              costoTotal: costoCalculado.costoTotal,
-              fechaCalculo: new Date(),
-            },
+            update: { ...costoCalculado, fechaCalculo },
+            create: { actividadId, ...costoCalculado, fechaCalculo },
           });
         }
 
+        // Ya están recalculados todos los APUs afectados. Ahora se refresca
+        // CADA PRESUPUESTO COMPLETO una sola vez (todas sus líneas y su total),
+        // no solo la línea de la actividad que cambió.
+        await sincronizarPresupuestosDeActividades(tx, idsActividades);
+
         return recursoActualizado;
-      }, { maxWait: 10_000, timeout: 30_000 });
+      }, { maxWait: 10_000, timeout: 120_000 });
     } catch (error) {
       throw this.traducirErrorPrisma(error);
     }
@@ -493,381 +452,5 @@ export class RecursosService implements OnModuleInit {
     }
 
     return error instanceof Error ? error : new Error('Error inesperado');
-  }
-
-  async seedDefaults() {
-    const predeterminados: Array<{
-      tipo: TipoRecurso;
-      descripcion: string;
-      unidad: string;
-      costoUnitario: number;
-      categoria: string;
-      fuente: string;
-    }> = [
-      {
-        tipo: TipoRecurso.mano_obra,
-        descripcion: 'Oficial albañil',
-        unidad: 'Hra',
-        costoUnitario: 120,
-        categoria: 'Mano de Obra',
-        fuente: 'Catálogo predeterminado',
-      },
-      {
-        tipo: TipoRecurso.mano_obra,
-        descripcion: 'Ayudante / Peón',
-        unidad: 'Hra',
-        costoUnitario: 80,
-        categoria: 'Mano de Obra',
-        fuente: 'Catálogo predeterminado',
-      },
-      {
-        tipo: TipoRecurso.mano_obra,
-        descripcion: 'Capataz de obra',
-        unidad: 'Hra',
-        costoUnitario: 160,
-        categoria: 'Mano de Obra',
-        fuente: 'Catálogo predeterminado',
-      },
-      {
-        tipo: TipoRecurso.mano_obra,
-        descripcion: 'Operador de maquinaria',
-        unidad: 'Hra',
-        costoUnitario: 150,
-        categoria: 'Mano de Obra',
-        fuente: 'Catálogo predeterminado',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Retroexcavadora',
-        unidad: 'Hra',
-        costoUnitario: 1200,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Catálogo predeterminado',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Compactador vibratorio (Plancha)',
-        unidad: 'Hra',
-        costoUnitario: 800,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Catálogo predeterminado',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Mezcladora de concreto 1 saco',
-        unidad: 'Hra',
-        costoUnitario: 450,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Catálogo predeterminado',
-      },
-      {
-        tipo: TipoRecurso.transporte,
-        descripcion: 'Camión de volteo (Volqueta)',
-        unidad: 'Viaje',
-        costoUnitario: 1500,
-        categoria: 'Transporte y Acarreo',
-        fuente: 'Catálogo predeterminado',
-      },
-      {
-        tipo: TipoRecurso.transporte,
-        descripcion: 'Acarreo de material selecto',
-        unidad: 'm3',
-        costoUnitario: 250,
-        categoria: 'Transporte y Acarreo',
-        fuente: 'Catálogo predeterminado',
-      },
-      {
-        tipo: TipoRecurso.mano_obra,
-        descripcion: 'Ayudante de obra',
-        unidad: 'Hra',
-        costoUnitario: 62.5,
-        categoria: 'Mano de Obra',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.mano_obra,
-        descripcion: 'Topógrafo',
-        unidad: 'Hra',
-        costoUnitario: 100,
-        categoria: 'Mano de Obra',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.mano_obra,
-        descripcion: 'Dibujante técnico',
-        unidad: 'Hra',
-        costoUnitario: 2197.46,
-        categoria: 'Mano de Obra',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.mano_obra,
-        descripcion: 'Operador de camión cisterna',
-        unidad: 'Hra',
-        costoUnitario: 62.5,
-        categoria: 'Mano de Obra',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.mano_obra,
-        descripcion: 'Operador de motoniveladora',
-        unidad: 'Hra',
-        costoUnitario: 62.5,
-        categoria: 'Mano de Obra',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.mano_obra,
-        descripcion: 'Operador de compactador',
-        unidad: 'Hra',
-        costoUnitario: 62.5,
-        categoria: 'Mano de Obra',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.mano_obra,
-        descripcion: 'Operador de retroexcavadora',
-        unidad: 'Hra',
-        costoUnitario: 62.5,
-        categoria: 'Mano de Obra',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.mano_obra,
-        descripcion: 'Operador de camión volquete',
-        unidad: 'Hra',
-        costoUnitario: 62.5,
-        categoria: 'Mano de Obra',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Camión de 2 toneladas',
-        unidad: 'Hra',
-        costoUnitario: 200,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Herramientas menores',
-        unidad: 'Hra',
-        costoUnitario: 80,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Estación total',
-        unidad: 'Hra',
-        costoUnitario: 2563.7,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Equipo de topografía',
-        unidad: 'Hra',
-        costoUnitario: 2395.5,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Tractor D-6',
-        unidad: 'Hra',
-        costoUnitario: 2929.94,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Retroexcavadora de movimiento de tierra',
-        unidad: 'Hra',
-        costoUnitario: 1464.97,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Volquete para desalojo',
-        unidad: 'Hra',
-        costoUnitario: 1729.38,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Camión cisterna',
-        unidad: 'Hra',
-        costoUnitario: 572.26,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Motoniveladora',
-        unidad: 'Hra',
-        costoUnitario: 2746.82,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Compactador',
-        unidad: 'Hra',
-        costoUnitario: 2014.34,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.equipo,
-        descripcion: 'Camión volquete para material selecto',
-        unidad: 'Hra',
-        costoUnitario: 2400.77,
-        categoria: 'Equipos y Maquinaria',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.transporte,
-        descripcion: 'Traslado Lowboy - Tractor D-6',
-        unidad: 'Viaje',
-        costoUnitario: 25637.01,
-        categoria: 'Transporte y Acarreo',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.transporte,
-        descripcion: 'Traslado Lowboy - Retroexcavadora',
-        unidad: 'Viaje',
-        costoUnitario: 25637.01,
-        categoria: 'Transporte y Acarreo',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.transporte,
-        descripcion: 'Traslado Lowboy - Compactador',
-        unidad: 'Viaje',
-        costoUnitario: 25637.01,
-        categoria: 'Transporte y Acarreo',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.transporte,
-        descripcion: 'Traslado Lowboy - Motoniveladora',
-        unidad: 'Viaje',
-        costoUnitario: 25634,
-        categoria: 'Transporte y Acarreo',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.material,
-        descripcion: 'Agua',
-        unidad: 'galón',
-        costoUnitario: 0.9,
-        categoria: 'Materiales de Construcción',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.material,
-        descripcion: 'Madera de pino',
-        unidad: 'Vrs/pulg2',
-        costoUnitario: 15,
-        categoria: 'Materiales de Construcción',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-      {
-        tipo: TipoRecurso.material,
-        descripcion: 'Material selecto',
-        unidad: 'm3',
-        costoUnitario: 160,
-        categoria: 'Materiales de Construcción',
-        fuente: 'Modelo PPTO_Horizontal.xlsx',
-      },
-    ];
-
-    let creados = 0;
-    for (const r of predeterminados) {
-      if (await this.insertarPredeterminado(r)) creados++;
-    }
-
-    return {
-      mensaje:
-        'Recursos predeterminados de mano de obra, equipos, transporte y materiales verificados.',
-      creados,
-    };
-  }
-
-  private async insertarPredeterminado(recurso: {
-    tipo: TipoRecurso;
-    descripcion: string;
-    unidad: string;
-    costoUnitario: number;
-    categoria: string;
-    fuente: string;
-  }): Promise<boolean> {
-    for (let intento = 0; intento < 3; intento++) {
-      try {
-        return await this.prisma.$transaction(
-          async (tx) => {
-            const existentes = await tx.recurso.findMany({
-              where: {
-                tipo: recurso.tipo,
-              },
-              select: { id: true, descripcion: true },
-            });
-            const clave = (descripcion: string) =>
-              descripcion
-                .toLocaleLowerCase()
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '');
-            const aliases: Record<string, string[]> = {
-              'Retroexcavadora de movimiento de tierra': [
-                'Retroexcavadora (referencia Excel)',
-              ],
-            };
-            const nombresAnteriores = [
-              `${recurso.descripcion} (referencia Excel)`,
-              ...(aliases[recurso.descripcion] ?? []),
-            ].map(clave);
-            const existente = existentes.find(
-              (item) =>
-                clave(item.descripcion) === clave(recurso.descripcion) ||
-                nombresAnteriores.includes(clave(item.descripcion)),
-            );
-            if (existente) {
-              if (existente.descripcion !== recurso.descripcion) {
-                await tx.recurso.update({
-                  where: { id: existente.id },
-                  data: { descripcion: recurso.descripcion },
-                });
-              }
-              return false;
-            }
-
-            const creado = await tx.recurso.create({
-              data: {
-                ...recurso,
-                codigo: await this.generarCodigo(tx, recurso.tipo),
-              },
-            });
-            await tx.historialPrecio.create({
-              data: {
-                recursoId: creado.id,
-                precio: recurso.costoUnitario,
-                fuente: recurso.fuente,
-              },
-            });
-            return true;
-          },
-          { maxWait: 10_000, timeout: 30_000 },
-        );
-      } catch (error) {
-        if (this.esConflictoCodigo(error) && intento < 2) continue;
-        throw this.traducirErrorPrisma(error);
-      }
-    }
-
-    return false;
   }
 }
