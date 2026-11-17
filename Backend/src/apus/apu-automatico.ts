@@ -170,6 +170,7 @@ export function elegirRecetaSimilar(
 export function recetaAproximadaDesdeBd(
   recursos: RecursoApuAutomatico[],
   recetas: RecetaBd[],
+  actividadNombre: string = '',
 ): DetalleApuAutomatico[] {
   if (recursos.length === 0) {
     throw new InternalServerErrorException(
@@ -184,6 +185,7 @@ export function recetaAproximadaDesdeBd(
     }
   }
 
+  const palabrasActividad = palabras(actividadNombre);
   const detalles: DetalleApuAutomatico[] = [];
 
   for (const tipo of ORDEN_TIPOS) {
@@ -191,6 +193,23 @@ export function recetaAproximadaDesdeBd(
     if (candidatos.length === 0) continue;
 
     const elegido = candidatos.reduce((mejor, actual) => {
+      const palabrasActual = palabras(actual.descripcion);
+      const palabrasMejor = palabras(mejor.descripcion);
+
+      let comunActual = 0;
+      for (const p of palabrasActividad) {
+        if (palabrasActual.has(p)) comunActual++;
+      }
+
+      let comunMejor = 0;
+      for (const p of palabrasActividad) {
+        if (palabrasMejor.has(p)) comunMejor++;
+      }
+
+      if (comunActual !== comunMejor) {
+        return comunActual > comunMejor ? actual : mejor;
+      }
+
       const usoActual = uso.get(actual.id) ?? 0;
       const usoMejor = uso.get(mejor.id) ?? 0;
 
@@ -258,8 +277,8 @@ export async function generarApuDesdeBd(
   return {
     metodo: 'aproximado',
     referencia:
-      'Rendimiento aproximado armado con el catálogo de recursos vigente. Revise las cantidades y agregue los materiales que no tengan precio en el catálogo antes de aprobar el presupuesto.',
-    detalles: recetaAproximadaDesdeBd(recursos, recetas),
+      'Rendimiento aproximado armado con el catálogo de recursos vigente (asociado por palabras clave). Revise las cantidades y agregue los materiales que no tengan precio en el catálogo antes de aprobar el presupuesto.',
+    detalles: recetaAproximadaDesdeBd(recursos, recetas, actividad.nombre),
   };
 }
 

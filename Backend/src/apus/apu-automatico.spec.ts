@@ -273,6 +273,32 @@ describe('recetaAproximadaDesdeBd', () => {
       'recurso-6',
     ]);
   });
+
+  it('prioriza recursos cuyas descripciones coinciden con palabras clave del nombre de la actividad', () => {
+    const recursosConNombres: RecursoApuAutomatico[] = [
+      {
+        id: 'mat-1',
+        tipo: TipoRecurso.material,
+        descripcion: 'Cemento Portland',
+        costoUnitario: decimal('10'),
+      },
+      {
+        id: 'mat-2',
+        tipo: TipoRecurso.material,
+        descripcion: 'Tubo PVC',
+        costoUnitario: decimal('5'),
+      },
+    ];
+
+    const detalles = recetaAproximadaDesdeBd(
+      recursosConNombres,
+      [],
+      'Suministro de Cemento',
+    );
+
+    expect(detalles).toHaveLength(1);
+    expect(detalles[0].recursoId).toBe('mat-1');
+  });
 });
 
 describe('crearApuAutomaticoEnTransaccion', () => {
