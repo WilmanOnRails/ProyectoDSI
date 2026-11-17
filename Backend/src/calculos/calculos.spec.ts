@@ -2,6 +2,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { describe, expect, it } from 'vitest';
 import {
   calcularApu,
+  calcularLineaDesdeApu,
   calcularResumenPresupuesto,
   calcularTotalesLinea,
   calcularTotalesPresupuesto,
@@ -9,150 +10,153 @@ import {
 } from './calculos.js';
 
 // ---------------------------------------------------------------------------
-// Helpers para tests
+// Los tests NO usan datos del catálogo ni de ningún pliego: los precios,
+// cantidades y recetas reales viven en la base de datos. Acá solo se comprueba
+// la FÓRMULA, con valores sintéticos mínimos.
 // ---------------------------------------------------------------------------
-function dec(v: number | string): Decimal {
-  return new Decimal(v.toString());
-}
+const d = (v: number | string) => new Decimal(v.toString());
+
+/** Costo que genera un detalle: cantidad × precio. */
+const TIPOS = ['material', 'mano_obra', 'equipo', 'transporte'] as const;
 
 // ---------------------------------------------------------------------------
 // calcularApu
 // ---------------------------------------------------------------------------
 describe('calcularApu', () => {
-  it('debe agrupar costos por tipo y redondear a 2 decimales', () => {
-    const detalles: DetalleApu[] = [
-      { recursoId: 'r1', tipo: 'material', cantidadPorUnidad: 5 },
-      { recursoId: 'r2', tipo: 'material', cantidadPorUnidad: '2.5' },
-      { recursoId: 'r3', tipo: 'mano_obra', cantidadPorUnidad: 8 },
-      { recursoId: 'r4', tipo: 'equipo', cantidadPorUnidad: 1 },
-      { recursoId: 'r5', tipo: 'transporte', cantidadPorUnidad: 3 },
-    ];
-
-    const precios: Record<string, Decimal> = {
-      r1: dec(100),
-      r2: dec(200),
-      r3: dec(150),
-      r4: dec(500),
-      r5: dec(80),
-    };
+  it('multiplica cantidad por precio y agrupa por tipo', () => {
+    const cantidad = 2;
+    const precio = 10;
+    const detalles: DetalleApu[] = TIPOS.map((tipo, i) => ({
+      recursoId: `r${i}`,
+      tipo,
+      cantidadPorUnidad: cantidad + i,
+    }));
+    const precios = Object.fromEntries(
+      TIPOS.map((_, i) => [`r${i}`, d(precio)]),
+    );
 
     const result = calcularApu(detalles, precios);
 
-    // materiales: 5*100 + 2.5*200 = 500 + 500 = 1000
-    expect(result.costoMateriales.toNumber()).toBe(1000);
-    // mano_obra: 8*150 = 1200
-    expect(result.costoManoObra.toNumber()).toBe(1200);
-    // equipo: 1*500 = 500
-    expect(result.costoEquipo.toNumber()).toBe(500);
-    // transporte: 3*80 = 240
-    expect(result.costoTransporte.toNumber()).toBe(240);
-    // total: 1000 + 1200 + 500 + 240 = 2940
-    expect(result.costoTotal.toNumber()).toBe(2940);
+    // 2×10, 3×10, 4×10, 5×10
+    expect(result.costoMateriales.toString()).toBe('20');
+    expect(result.costoManoObra.toString()).toBe('30');
+    expect(result.costoEquipo.toString()).toBe('40');
+    expect(result.costoTransporte.toString()).toBe('50');
+    expect(result.costoTotal.toString()).toBe('140');
   });
 
-  it('debe redondear correctamente valores con muchos decimales', () => {
+  it('redondea a 2 decimales sin acumular floats', () => {
     const detalles: DetalleApu[] = [
-      { recursoId: 'r1', tipo: 'material', cantidadPorUnidad: '0.3333' },
+      { recursoId: 'r', tipo: 'material', cantidadPorUnidad: '1' },
     ];
-    const precios: Record<string, Decimal> = {
-      r1: dec('100'),
-    };
+
+    const result = calcularApu(detalles, { r: d('10.005') });
+
+    expect(result.costoMateriales.toString()).toBe('10.01');
+    expect(result.costoTotal.toString()).toBe('10.01');
+  });
+
+  it('suma varios detalles del mismo tipo antes de redondear', () => {
+    const detalles: DetalleApu[] = [
+      { recursoId: 'r1', tipo: 'material', cantidadPorUnidad: '0.001' },
+      { recursoId: 'r2', tipo: 'material', cantidadPorUnidad: '0.001' },
+      { recursoId: 'r3', tipo: 'material', cantidadPorUnidad: '0.001' },
+    ];
+    const precios = { r1: d('0.004'), r2: d('0.004'), r3: d('0.004') };
 
     const result = calcularApu(detalles, precios);
 
-    // 0.3333 * 100 = 33.33
-    expect(result.costoMateriales.toString()).toBe('33.33');
-    expect(result.costoTotal.toString()).toBe('33.33');
+    // 0.000012 × 3 = 0.000036 → 0.00 (redondeo solo al final)
+    expect(result.costoTotal.toString()).toBe('0');
   });
 
-  it('debe devolver ceros si la lista de detalles está vacía', () => {
+  it('devuelve ceros si la lista de detalles está vacía', () => {
     const result = calcularApu([], {});
 
-    expect(result.costoMateriales.toNumber()).toBe(0);
-    expect(result.costoManoObra.toNumber()).toBe(0);
-    expect(result.costoEquipo.toNumber()).toBe(0);
-    expect(result.costoTransporte.toNumber()).toBe(0);
-    expect(result.costoTotal.toNumber()).toBe(0);
+    expect(result.costoMateriales.toString()).toBe('0');
+    expect(result.costoManoObra.toString()).toBe('0');
+    expect(result.costoEquipo.toString()).toBe('0');
+    expect(result.costoTransporte.toString()).toBe('0');
+    expect(result.costoTotal.toString()).toBe('0');
   });
 
-  it('debe ignorar detalles cuyo recurso no tiene precio', () => {
+  it('ignora detalles cuyo recurso no tiene precio', () => {
     const detalles: DetalleApu[] = [
-      { recursoId: 'r1', tipo: 'material', cantidadPorUnidad: 10 },
-      { recursoId: 'inexistente', tipo: 'material', cantidadPorUnidad: 5 },
+      { recursoId: 'existe', tipo: 'material', cantidadPorUnidad: 1 },
+      { recursoId: 'no-existe', tipo: 'material', cantidadPorUnidad: 1 },
     ];
-    const precios: Record<string, Decimal> = {
-      r1: dec(50),
-    };
 
-    const result = calcularApu(detalles, precios);
+    const result = calcularApu(detalles, { existe: d(5) });
 
-    // Solo r1: 10 * 50 = 500; r_inexistente se ignora
-    expect(result.costoMateriales.toNumber()).toBe(500);
-    expect(result.costoTotal.toNumber()).toBe(500);
+    expect(result.costoMateriales.toString()).toBe('5');
+    expect(result.costoTotal.toString()).toBe('5');
   });
 
-  it('debe aceptar cantidades y precios como Decimal', () => {
+  it('acepta cantidades y precios como Decimal', () => {
     const detalles: DetalleApu[] = [
-      {
-        recursoId: 'r1',
-        tipo: 'mano_obra',
-        cantidadPorUnidad: dec('2.75'),
-      },
+      { recursoId: 'r', tipo: 'mano_obra', cantidadPorUnidad: d(2) },
     ];
-    const precios: Record<string, Decimal> = {
-      r1: dec('333.33'),
-    };
 
-    const result = calcularApu(detalles, precios);
+    const result = calcularApu(detalles, { r: d('0.5') });
 
-    // 2.75 * 333.33 = 916.6575 → redondeado 916.66
-    expect(result.costoManoObra.toString()).toBe('916.66');
-    expect(result.costoTotal.toString()).toBe('916.66');
+    expect(result.costoManoObra.toString()).toBe('1');
   });
 });
 
 // ---------------------------------------------------------------------------
-// calcularTotalesPresupuesto (cascada con administración)
+// calcularTotalesPresupuesto (cascada)
 // ---------------------------------------------------------------------------
 describe('calcularTotalesPresupuesto', () => {
-  it('debe reproducir el caso del Excel: 4,714,181.35 con 5/8/10/0/17', () => {
-    const result = calcularTotalesPresupuesto(4_714_181.35, {
-      pctIndirectos: 5,
-      pctAdministracion: 8,
-      pctUtilidad: 10,
-      pctImprevistos: 0,
-      pctImpuestos: 17,
+  const pct = (porcentaje: number) => porcentaje;
+
+  it('aplica cada porcentaje sobre el acumulado anterior (cascada)', () => {
+    const result = calcularTotalesPresupuesto(100, {
+      pctIndirectos: pct(10),
+      pctAdministracion: pct(10),
+      pctUtilidad: pct(10),
+      pctImprevistos: pct(0),
+      pctImpuestos: pct(10),
     });
 
-    expect(result.costosDirectos.toString()).toBe('4714181.35');
-    expect(result.indirectos.toString()).toBe('235709.07');
-    expect(result.administracion.toString()).toBe('395991.23');
-    expect(result.utilidad.toString()).toBe('534588.17');
+    expect(result.costosDirectos.toString()).toBe('100');
+    expect(result.indirectos.toString()).toBe('10');
+    expect(result.administracion.toString()).toBe('11');
+    expect(result.utilidad.toString()).toBe('12.1');
     expect(result.imprevistos.toString()).toBe('0');
-    expect(result.subtotalNeto.toString()).toBe('5880469.82');
-    expect(result.impuestos.toString()).toBe('999679.87');
-    expect(result.total.toString()).toBe('6880149.69');
+    expect(result.subtotalNeto.toString()).toBe('133.1');
+    expect(result.impuestos.toString()).toBe('13.31');
+    expect(result.total.toString()).toBe('146.41');
   });
 
-  it('debe aplicar administración después de indirectos y antes de utilidad', () => {
-    const result = calcularTotalesPresupuesto(1_000_000, {
-      pctIndirectos: 5,
-      pctAdministracion: 8,
+  it('no es un cálculo en paralelo', () => {
+    const cascada = calcularTotalesPresupuesto(100, {
+      pctIndirectos: 10,
+      pctAdministracion: 0,
       pctUtilidad: 10,
       pctImprevistos: 0,
-      pctImpuestos: 15,
+      pctImpuestos: 10,
     });
 
-    expect(result.indirectos.toString()).toBe('50000');
-    expect(result.administracion.toString()).toBe('84000');
-    expect(result.utilidad.toString()).toBe('113400');
-    expect(result.subtotalNeto.toString()).toBe('1247400');
-    expect(result.impuestos.toString()).toBe('187110');
-    expect(result.total.toString()).toBe('1434510');
+    // Paralelo daría 100 + 10 + 10 + 10 = 130
+    expect(cascada.total.toString()).toBe('133.1');
+    expect(cascada.total.toString()).not.toBe('130');
   });
 
-  it('debe funcionar con porcentajes 0/0/0/0/0 → total = directos', () => {
-    const result = calcularTotalesPresupuesto(1_000_000, {
+  it('incluye imprevistos en la cascada', () => {
+    const result = calcularTotalesPresupuesto(100, {
+      pctIndirectos: 0,
+      pctAdministracion: 0,
+      pctUtilidad: 0,
+      pctImprevistos: 10,
+      pctImpuestos: 0,
+    });
+
+    expect(result.imprevistos.toString()).toBe('10');
+    expect(result.total.toString()).toBe('110');
+  });
+
+  it('con 0 % el total es igual al costo directo', () => {
+    const result = calcularTotalesPresupuesto(100, {
       pctIndirectos: 0,
       pctAdministracion: 0,
       pctUtilidad: 0,
@@ -160,44 +164,23 @@ describe('calcularTotalesPresupuesto', () => {
       pctImpuestos: 0,
     });
 
-    expect(result.indirectos.toNumber()).toBe(0);
-    expect(result.administracion.toNumber()).toBe(0);
-    expect(result.utilidad.toNumber()).toBe(0);
-    expect(result.impuestos.toNumber()).toBe(0);
-    expect(result.total.toNumber()).toBe(1_000_000);
+    expect(result.total.toString()).toBe('100');
   });
 
-  it('debe funcionar con directos 0 → todo queda en 0', () => {
+  it('con costo directo 0 todo queda en 0', () => {
     const result = calcularTotalesPresupuesto(0, {
-      pctIndirectos: 5,
-      pctAdministracion: 8,
+      pctIndirectos: 10,
+      pctAdministracion: 10,
       pctUtilidad: 10,
       pctImprevistos: 0,
-      pctImpuestos: 15,
+      pctImpuestos: 10,
     });
 
-    expect(result.total.toNumber()).toBe(0);
+    expect(result.total.toString()).toBe('0');
   });
 
-  it('debe demostrar que el cálculo es en CASCADA, no paralelo', () => {
-    const directos = 100_000;
-
-    // Cascada: ind=15000, admin=0, util=(115000)*0.10=11500,
-    // imp=(126500)*0.15=18975, total=145475.
-    const cascada = calcularTotalesPresupuesto(directos, {
-      pctIndirectos: 15,
-      pctAdministracion: 0,
-      pctUtilidad: 10,
-      pctImprevistos: 0,
-      pctImpuestos: 15,
-    });
-
-    expect(cascada.total.toNumber()).toBe(145475);
-    expect(cascada.total.toNumber()).not.toBe(140000); // NO paralelo
-  });
-
-  it('debe aceptar porcentajes con decimales', () => {
-    const result = calcularTotalesPresupuesto(1_000_000, {
+  it('acepta porcentajes con decimales', () => {
+    const result = calcularTotalesPresupuesto(100, {
       pctIndirectos: '12.5',
       pctAdministracion: 0,
       pctUtilidad: '8.75',
@@ -205,105 +188,197 @@ describe('calcularTotalesPresupuesto', () => {
       pctImpuestos: '15',
     });
 
-    expect(result.indirectos.toString()).toBe('125000');
-    expect(result.utilidad.toString()).toBe('98437.5');
-    expect(result.impuestos.toString()).toBe('183515.63');
-    expect(result.total.toString()).toBe('1406953.13');
+    expect(result.indirectos.toString()).toBe('12.5');
+    expect(result.utilidad.toString()).toBe('9.84');
+    expect(result.impuestos.toString()).toBe('18.35');
+    expect(result.total.toString()).toBe('140.69');
   });
 });
 
 // ---------------------------------------------------------------------------
-// calcularResumenPresupuesto (costo directo = suma de líneas)
+// calcularTotalesLinea: P.U. = importe ÷ cantidad, total = P.U. × cantidad
+// ---------------------------------------------------------------------------
+describe('calcularTotalesLinea', () => {
+  it('divide el importe entre la cantidad para obtener el P.U.', () => {
+    const cantidad = 4;
+    const importe = 100;
+
+    const linea = calcularTotalesLinea({
+      cantidadProyecto: cantidad,
+      costoMaterialesCong: importe,
+      costoManoObraCong: importe / 2,
+      costoEquipoCong: 0,
+      costoTransporteCong: 0,
+    });
+
+    expect(linea.puMateriales.toString()).toBe('25');
+    expect(linea.puManoObra.toString()).toBe('12.5');
+    expect(linea.totalMateriales.toString()).toBe('100');
+    expect(linea.totalManoObra.toString()).toBe('50');
+    expect(linea.sumaTotal.toString()).toBe('150');
+  });
+
+  it('reconstruye el total multiplicando el P.U. por la cantidad', () => {
+    const cantidad = 3;
+    const importe = 100;
+
+    const linea = calcularTotalesLinea({
+      cantidadProyecto: cantidad,
+      costoMaterialesCong: importe,
+      costoManoObraCong: 0,
+      costoEquipoCong: 0,
+      costoTransporteCong: 0,
+    });
+
+    expect(linea.puMateriales.toString()).toBe('33.333333');
+    expect(linea.totalMateriales.toString()).toBe('100');
+  });
+
+  it('si la cantidad es 0 el P.U. y los totales quedan en 0', () => {
+    const linea = calcularTotalesLinea({
+      cantidadProyecto: 0,
+      costoMaterialesCong: 10,
+      costoManoObraCong: 20,
+      costoEquipoCong: 30,
+      costoTransporteCong: 40,
+    });
+
+    expect(linea.puTotal.toString()).toBe('0');
+    expect(linea.sumaTotal.toString()).toBe('0');
+  });
+
+  it('el P.U. total es la suma de los P.U. de las cuatro categorías', () => {
+    const linea = calcularTotalesLinea({
+      cantidadProyecto: 1,
+      costoMaterialesCong: 1,
+      costoManoObraCong: 2,
+      costoEquipoCong: 3,
+      costoTransporteCong: 4,
+    });
+
+    expect(linea.puTotal.toString()).toBe('10');
+    expect(linea.sumaTotal.toString()).toBe('10');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// calcularResumenPresupuesto: suma todas las líneas y aplica la cascada
 // ---------------------------------------------------------------------------
 describe('calcularResumenPresupuesto', () => {
-  it('debe sumar las Suma Total de todas las líneas para el costo directo', () => {
-    const items = [
-      {
-        cantidadProyecto: 10,
-        costoUnitarioCongelado: 180,
-        costoMaterialesCong: 10000,
-        costoManoObraCong: 5000,
-        costoEquipoCong: 2000,
-        costoTransporteCong: 1000,
-        total: 18000,
-      },
-      {
-        cantidadProyecto: 2,
-        costoUnitarioCongelado: 90,
-        costoMaterialesCong: 200,
-        costoManoObraCong: 100,
-        costoEquipoCong: 40,
-        costoTransporteCong: 20,
-        total: 360,
-      },
-    ];
+  const item = (cantidad: number, importe: number) => ({
+    cantidadProyecto: cantidad,
+    costoMaterialesCong: importe,
+    costoManoObraCong: 0,
+    costoEquipoCong: 0,
+    costoTransporteCong: 0,
+  });
 
-    const resumen = calcularResumenPresupuesto(items, {
-      pctIndirectos: 5,
-      pctAdministracion: 8,
-      pctUtilidad: 10,
+  const sinPorcentajes = {
+    pctIndirectos: 0,
+    pctAdministracion: 0,
+    pctUtilidad: 0,
+    pctImprevistos: 0,
+    pctImpuestos: 0,
+  };
+
+  it('el costo directo es la suma de la Suma Total de TODAS las líneas', () => {
+    const resumen = calcularResumenPresupuesto(
+      [item(2, 100), item(5, 50), item(1, 25)],
+      sinPorcentajes,
+    );
+
+    expect(resumen.costosDirectos.toString()).toBe('175');
+    expect(resumen.total.toString()).toBe('175');
+  });
+
+  it('no depende del orden de las líneas', () => {
+    const lineas = [item(2, 100), item(5, 50), item(1, 25)];
+
+    const directo = calcularResumenPresupuesto(lineas, sinPorcentajes);
+    const invertido = calcularResumenPresupuesto(
+      [...lineas].reverse(),
+      sinPorcentajes,
+    );
+
+    expect(directo.costosDirectos.toString()).toBe(
+      invertido.costosDirectos.toString(),
+    );
+  });
+
+  it('sin líneas el presupuesto queda en 0', () => {
+    const resumen = calcularResumenPresupuesto([], sinPorcentajes);
+
+    expect(resumen.costosDirectos.toString()).toBe('0');
+    expect(resumen.total.toString()).toBe('0');
+  });
+
+  it('aplica la cascada sobre el costo directo de todas las líneas', () => {
+    const resumen = calcularResumenPresupuesto([item(1, 100), item(1, 100)], {
+      pctIndirectos: 10,
+      pctAdministracion: 0,
+      pctUtilidad: 0,
       pctImprevistos: 0,
-      pctImpuestos: 15,
+      pctImpuestos: 0,
     });
 
-    expect(resumen.costoMateriales.toString()).toBe('10200');
-    expect(resumen.costoManoObra.toString()).toBe('5100');
-    expect(resumen.costoEquipo.toString()).toBe('2040');
-    expect(resumen.costoTransporte.toString()).toBe('1020');
-    expect(resumen.costosDirectos.toString()).toBe('18360');
+    expect(resumen.costosDirectos.toString()).toBe('200');
+    expect(resumen.indirectos.toString()).toBe('20');
+    expect(resumen.total.toString()).toBe('220');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// calcularLineaDesdeApu: copia lo que viene del APU y suma el importe
+// ---------------------------------------------------------------------------
+describe('calcularLineaDesdeApu', () => {
+  const cache = {
+    costoMateriales: 1,
+    costoManoObra: 2,
+    costoEquipo: 3,
+    costoTransporte: 4,
+    costoTotal: 10,
+  };
+
+  it('copia el importe del APU sin transformarlo', () => {
+    const linea = calcularLineaDesdeApu(cache);
+
+    expect(linea.costoMaterialesCong.toString()).toBe('1');
+    expect(linea.costoManoObraCong.toString()).toBe('2');
+    expect(linea.costoEquipoCong.toString()).toBe('3');
+    expect(linea.costoTransporteCong.toString()).toBe('4');
+    expect(linea.costoUnitarioCongelado.toString()).toBe('10');
   });
 
-  it('divide el subtotal APU entre la cantidad y reconstruye el total', () => {
-    const linea = calcularTotalesLinea({
-      cantidadProyecto: '3710.36',
-      costoUnitarioCongelado: '0.16',
-      costoMaterialesCong: '519.45',
-      costoManoObraCong: '74.21',
-      costoEquipoCong: '0',
-      costoTransporteCong: '0',
-      total: '593.66',
-    });
+  it('el total de la línea es la suma de las cuatro categorías', () => {
+    const linea = calcularLineaDesdeApu(cache);
 
-    expect(linea.puMateriales.toString()).toBe('0.14');
-    expect(linea.puManoObra.toString()).toBe('0.020001');
-    expect(linea.totalMateriales.toString()).toBe('519.45');
-    expect(linea.totalManoObra.toString()).toBe('74.21');
-    expect(linea.sumaTotal.toString()).toBe('593.66');
+    expect(linea.total.toString()).toBe('10');
   });
 
-  it('divide el subtotal APU entre la cantidad total del proyecto', () => {
-    const linea = calcularTotalesLinea({
-      cantidadProyecto: '3710.36',
-      costoUnitarioCongelado: '1.35',
-      costoMaterialesCong: '0',
-      costoManoObraCong: '0.90',
-      costoEquipoCong: '0.45',
-      costoTransporteCong: '0',
-      total: '1.35',
-    });
+  it('al pasarla por calcularTotalesLinea da el P.U. y los totales', () => {
+    const cantidad = 2;
+    const linea = calcularLineaDesdeApu(cache);
+    const totales = calcularTotalesLinea({ cantidadProyecto: cantidad, ...linea });
 
-    expect(linea.puManoObra.toString()).toBe('0.000243');
-    expect(linea.puEquipo.toString()).toBe('0.000121');
-    expect(linea.totalManoObra.toString()).toBe('0.9');
-    expect(linea.totalEquipo.toString()).toBe('0.45');
-    expect(linea.sumaTotal.toString()).toBe('1.35');
+    expect(totales.puMateriales.toString()).toBe('0.5');
+    expect(totales.puManoObra.toString()).toBe('1');
+    expect(totales.puEquipo.toString()).toBe('1.5');
+    expect(totales.puTransporte.toString()).toBe('2');
+    expect(totales.totalMateriales.toString()).toBe('1');
+    expect(totales.totalTransporte.toString()).toBe('4');
+    expect(totales.sumaTotal.toString()).toBe('10');
   });
 
-  it('convierte subtotales guardados por versiones anteriores en sus P.U. originales', () => {
-    const linea = calcularTotalesLinea({
-      cantidadProyecto: '3710.36',
-      costoUnitarioCongelado: '0.16',
-      costoMaterialesCong: '0.14',
-      costoManoObraCong: '0.02',
-      costoEquipoCong: '0',
-      costoTransporteCong: '0',
-      total: '593.66',
+  it('redondea el importe a 2 decimales', () => {
+    const linea = calcularLineaDesdeApu({
+      costoMateriales: '1.005',
+      costoManoObra: 0,
+      costoEquipo: 0,
+      costoTransporte: 0,
+      costoTotal: '1.005',
     });
 
-    expect(linea.puMateriales.toString()).toBe('0.14');
-    expect(linea.puManoObra.toString()).toBe('0.02');
-    expect(linea.totalMateriales.toString()).toBe('519.45');
-    expect(linea.totalManoObra.toString()).toBe('74.21');
-    expect(linea.sumaTotal.toString()).toBe('593.66');
+    expect(linea.costoMaterialesCong.toString()).toBe('1.01');
+    expect(linea.total.toString()).toBe('1.01');
   });
 });

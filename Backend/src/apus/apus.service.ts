@@ -9,6 +9,7 @@ import {
   recalcularCacheApu,
 } from './apu-automatico.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { sincronizarPresupuestosDeActividad } from '../presupuestos/recalculo-presupuesto.js';
 import { CreateApusDto } from './dto/create-apus.dto.js';
 import { UpdateApusDto } from './dto/update-apus.dto.js';
 
@@ -114,6 +115,10 @@ export class ApusService {
               });
 
         const apuCostoCache = await recalcularCacheApu(tx, actividadId);
+
+        // Si la actividad ya está en presupuestos, sus líneas se actualizan
+        // con el nuevo costo para que el presupuesto no quede desfasado.
+        await sincronizarPresupuestosDeActividad(tx, actividadId);
 
         return { ...detalle, apuCostoCache };
       },
@@ -231,6 +236,8 @@ export class ApusService {
             actual.actividadId,
           );
 
+          await sincronizarPresupuestosDeActividad(tx, actual.actividadId);
+
           return { ...actualizado, apuCostoCache };
         },
         APU_TRANSACTION_OPTIONS,
@@ -253,6 +260,8 @@ export class ApusService {
           tx,
           actual.actividadId,
         );
+
+        await sincronizarPresupuestosDeActividad(tx, actual.actividadId);
 
         return { ...eliminado, apuCostoCache };
       },

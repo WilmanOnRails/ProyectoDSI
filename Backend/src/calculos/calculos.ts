@@ -44,14 +44,35 @@ export interface ResultadoPresupuesto {
 /** Datos mínimos de una línea de presupuesto para calcular sus totales. */
 export interface ItemPresupuestoCalculo {
   cantidadProyecto: Decimal | number | string;
-  /** Importe congelado que se divide entre la cantidad del proyecto para obtener el P.U. */
+  /** Importe congelado del APU; se divide entre la cantidad para obtener el P.U. */
   costoMaterialesCong: Decimal | number | string;
   costoManoObraCong: Decimal | number | string;
   costoEquipoCong: Decimal | number | string;
   costoTransporteCong: Decimal | number | string;
-  /** Permite identificar líneas guardadas previamente como costos unitarios. */
+  /** Costo total del APU (dato informativo de la fila; el cálculo usa las 4 columnas). */
   costoUnitarioCongelado?: Decimal | number | string;
+  /** Total guardado de la fila (dato informativo; se recalcula desde las 4 columnas). */
   total?: Decimal | number | string;
+}
+
+/** Costos unitarios del APU que se copian a una línea de presupuesto. */
+export interface CostosApuUnitarios {
+  costoMateriales: Decimal | number | string;
+  costoManoObra: Decimal | number | string;
+  costoEquipo: Decimal | number | string;
+  costoTransporte: Decimal | number | string;
+  costoTotal: Decimal | number | string;
+}
+
+/** Columnas de PresupuestoItem que se congelan al agregar una actividad. */
+export interface LineaPresupuestoCongelada {
+  costoUnitarioCongelado: Decimal;
+  costoMaterialesCong: Decimal;
+  costoManoObraCong: Decimal;
+  costoEquipoCong: Decimal;
+  costoTransporteCong: Decimal;
+  /** Importe de la línea: suma de los importes que vienen del APU. */
+  total: Decimal;
 }
 
 export interface TotalesLineaPresupuesto {
@@ -106,14 +127,6 @@ function redondear(valor: Decimal): Decimal {
  *
  * @param detalles  - Filas de apu_detalle de la actividad.
  * @param precios   - Mapa { recursoId → precio_vigente } — viene de Recurso.costoUnitario.
- *
- * @example
- * const resultado = calcularApu(
- *   [{ recursoId: 'r1', tipo: 'material', cantidadPorUnidad: 5 }],
- *   { r1: new Decimal('495') },
- * );
- * // resultado.costoMateriales → Decimal('2475.00')
- * // resultado.costoTotal      → Decimal('2475.00')
  */
 export function calcularApu(
   detalles: DetalleApu[],
@@ -215,14 +228,57 @@ export function calcularTotalesPresupuesto(
 }
 
 // ---------------------------------------------------------------------------
+// calcularLineaDesdeApu
+// ---------------------------------------------------------------------------
+
+/**
+ * Convierte lo que viene del módulo de Configurar APU en las columnas congeladas
+ * de una línea de presupuesto.
+ *
+ * Las columnas `costo*Cong` guardan el importe tal como sale del APU y el total
+ * de la línea es la suma de esos importes. El P.U. NO se guarda: se obtiene en
+ * `calcularTotalesLinea()` dividiendo cada importe entre la cantidad del
+ * proyecto, y el total de cada categoría se reconstruye multiplicando ese P.U.
+ * por la cantidad.
+ */
+export function calcularLineaDesdeApu(
+  cache: CostosApuUnitarios,
+): LineaPresupuestoCongelada {
+  const costoUnitarioCongelado = redondear(d(cache.costoTotal));
+  const costoMaterialesCong = redondear(d(cache.costoMateriales));
+  const costoManoObraCong = redondear(d(cache.costoManoObra));
+  const costoEquipoCong = redondear(d(cache.costoEquipo));
+  const costoTransporteCong = redondear(d(cache.costoTransporte));
+
+  const total = redondear(
+    costoMaterialesCong
+      .add(costoManoObraCong)
+      .add(costoEquipoCong)
+      .add(costoTransporteCong),
+  );
+
+  return {
+    costoUnitarioCongelado,
+    costoMaterialesCong,
+    costoManoObraCong,
+    costoEquipoCong,
+    costoTransporteCong,
+    total,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // calcularTotalesLinea
 // ---------------------------------------------------------------------------
 
 /**
  * Calcula los totales de UNA línea del desglose.
  *
- * El P.U. de cada categoría es el importe APU congelado dividido entre la
- * cantidad del proyecto; cada total es ese P.U. multiplicado por la cantidad.
+ * Fórmula:
+ *   P.U. de la categoría = importe congelado del APU ÷ cantidad del proyecto
+ *   Total de la categoría = P.U. × cantidad del proyecto
+ *
+ * Y el total de la línea es la suma de esos totales.
  */
 export function calcularTotalesLinea(
   item: ItemPresupuestoCalculo,
@@ -234,31 +290,13 @@ export function calcularTotalesLinea(
     d(item.costoEquipoCong),
     d(item.costoTransporteCong),
   ];
-  const sumaCongelada = costosCongelados.reduce(
-    (suma, costo) => suma.add(costo),
-    new Decimal(0),
-  );
-  const precioUnitarioCongelado =
-    item.costoUnitarioCongelado !== undefined
-      ? d(item.costoUnitarioCongelado)
-      : null;
-  const camposGuardadosComoUnitarios =
-    precioUnitarioCongelado !== null &&
-    cantidad.gt(0) &&
-    redondear(sumaCongelada)
-      .minus(precioUnitarioCongelado)
-      .abs()
-      .lte('0.01') &&
-    item.total !== undefined &&
-    redondear(d(item.total).minus(sumaCongelada.mul(cantidad)))
-      .abs()
-      .lte('0.01');
+  /**
+   * P.U. = importe congelado del APU ÷ cantidad del proyecto.
+   * Si la cantidad es 0 no se puede dividir: el P.U. queda en 0.
+   */
   const unitario = (costo: Decimal) => {
     if (!cantidad.gt(0)) return new Decimal(0);
-    const importeProyecto = camposGuardadosComoUnitarios
-      ? costo.mul(cantidad)
-      : costo;
-    return importeProyecto.div(cantidad).toDecimalPlaces(6);
+    return costo.div(cantidad).toDecimalPlaces(6);
   };
   const puMateriales = unitario(costosCongelados[0]);
   const puManoObra = unitario(costosCongelados[1]);

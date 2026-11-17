@@ -7,11 +7,14 @@ import { Prisma } from '@prisma/client';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import {
+  calcularLineaDesdeApu,
   calcularResumenPresupuesto,
-  calcularTotalesLinea,
   type ItemPresupuestoCalculo,
 } from '../calculos/calculos.js';
-import { crearApuAutomaticoEnTransaccion } from '../apus/apu-automatico.js';
+import {
+  cargarRecetasDesdeBd,
+  crearApuAutomaticoEnTransaccion,
+} from '../apus/apu-automatico.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 const require = createRequire(import.meta.url);
@@ -80,6 +83,9 @@ export class ImportacionesService {
             costoUnitario: true,
           },
         });
+        // Las recetas del catálogo se leen UNA vez para todo el pliego: cada
+        // actividad nueva reutiliza la receta más parecida que ya está en la BD.
+        const recetasBd = await cargarRecetasDesdeBd(tx);
         const proyecto = await tx.proyecto.create({
           data: {
             nombre: pliego.nombreProyecto,
@@ -148,49 +154,25 @@ export class ImportacionesService {
             actividad,
             recursos,
             cantidadProyecto,
+            recetasBd,
           );
-          const costoMaterialesCong = apu.cache.costoMateriales;
-          const costoManoObraCong = apu.cache.costoManoObra;
-          const costoEquipoCong = apu.cache.costoEquipo;
-          const costoTransporteCong = apu.cache.costoTransporte;
-          const totalCongelado = costoMaterialesCong
-            .add(costoManoObraCong)
-            .add(costoEquipoCong)
-            .add(costoTransporteCong);
-          const totalesLinea = calcularTotalesLinea({
-            cantidadProyecto,
-            costoUnitarioCongelado: apu.cache.costoTotal,
-            costoMaterialesCong,
-            costoManoObraCong,
-            costoEquipoCong,
-            costoTransporteCong,
-            total: totalCongelado,
-          });
+          // Copia el importe congelado del APU a la línea del presupuesto.
+          const linea = calcularLineaDesdeApu(apu.cache);
 
           await tx.presupuestoItem.create({
             data: {
               presupuestoId: presupuesto.id,
               actividadId: actividad.id,
               cantidadProyecto,
-              costoUnitarioCongelado: apu.cache.costoTotal,
-              costoMaterialesCong,
-              costoManoObraCong,
-              costoEquipoCong,
-              costoTransporteCong,
+              ...linea,
               costoSubcontratoCong: new Prisma.Decimal(0),
               orden: indice + 1,
-              total: totalesLinea.sumaTotal,
             },
           });
 
           itemsParaResumen.push({
             cantidadProyecto,
-            costoMaterialesCong,
-            costoManoObraCong,
-            costoEquipoCong,
-            costoTransporteCong,
-            costoUnitarioCongelado: apu.cache.costoTotal,
-            total: totalesLinea.sumaTotal,
+            ...linea,
           });
           itemsCreados.push({
             actividadId: actividad.id,

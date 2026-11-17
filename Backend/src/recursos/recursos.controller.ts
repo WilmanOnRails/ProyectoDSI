@@ -33,13 +33,6 @@ export class RecursosController {
     return this.recursosService.create(createRecursoDto);
   }
 
-  @Post('seed-defaults')
-  @UseGuards(JwtAuthGuard, WriteAccessGuard)
-  @ApiOperation({ summary: 'Inserta recursos por defecto de mano de obra, equipo y transporte' })
-  seedDefaults() {
-    return this.recursosService.seedDefaults();
-  }
-
   @Post('importar')
   @UseGuards(JwtAuthGuard, WriteAccessGuard)
   @ApiOperation({

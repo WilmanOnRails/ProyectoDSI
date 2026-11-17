@@ -9,18 +9,6 @@ export interface RecursoApuAutomatico {
   costoUnitario: Prisma.Decimal;
 }
 
-interface LineaBase {
-  tipo: TipoRecurso;
-  descripcion: string;
-  cantidad: string;
-}
-
-interface RecetaBase {
-  nombre: string;
-  cantidadBase: string;
-  lineas: LineaBase[];
-}
-
 export interface DetalleApuAutomatico {
   recursoId: string;
   tipo: TipoRecurso;
@@ -33,442 +21,299 @@ export interface ResultadoApuAutomatico {
   detalles: DetalleApuAutomatico[];
 }
 
-const recurso = {
-  ayudante: {
-    tipo: TipoRecurso.mano_obra,
-    descripcion: 'Ayudante de obra',
-  },
-  topografo: { tipo: TipoRecurso.mano_obra, descripcion: 'Topógrafo' },
-  dibujante: { tipo: TipoRecurso.mano_obra, descripcion: 'Dibujante técnico' },
-  operadorCisterna: {
-    tipo: TipoRecurso.mano_obra,
-    descripcion: 'Operador de camión cisterna',
-  },
-  operadorMotoniveladora: {
-    tipo: TipoRecurso.mano_obra,
-    descripcion: 'Operador de motoniveladora',
-  },
-  operadorCompactador: {
-    tipo: TipoRecurso.mano_obra,
-    descripcion: 'Operador de compactador',
-  },
-  operadorRetroexcavadora: {
-    tipo: TipoRecurso.mano_obra,
-    descripcion: 'Operador de retroexcavadora',
-  },
-  operadorVolquete: {
-    tipo: TipoRecurso.mano_obra,
-    descripcion: 'Operador de camión volquete',
-  },
-  camionDosToneladas: {
-    tipo: TipoRecurso.equipo,
-    descripcion: 'Camión de 2 toneladas',
-  },
-  herramientas: {
-    tipo: TipoRecurso.equipo,
-    descripcion: 'Herramientas menores',
-  },
-  estacionTotal: { tipo: TipoRecurso.equipo, descripcion: 'Estación total' },
-  equipoTopografico: {
-    tipo: TipoRecurso.equipo,
-    descripcion: 'Equipo de topografía',
-  },
-  tractor: { tipo: TipoRecurso.equipo, descripcion: 'Tractor D-6' },
-  retroexcavadora: {
-    tipo: TipoRecurso.equipo,
-    descripcion: 'Retroexcavadora de movimiento de tierra',
-  },
-  volquete: {
-    tipo: TipoRecurso.equipo,
-    descripcion: 'Volquete para desalojo',
-  },
-  cisterna: { tipo: TipoRecurso.equipo, descripcion: 'Camión cisterna' },
-  motoniveladora: {
-    tipo: TipoRecurso.equipo,
-    descripcion: 'Motoniveladora',
-  },
-  compactador: {
-    tipo: TipoRecurso.equipo,
-    descripcion: 'Compactador',
-  },
-  camionMaterialSelecto: {
-    tipo: TipoRecurso.equipo,
-    descripcion: 'Camión volquete para material selecto',
-  },
-  lowboyTractor: {
-    tipo: TipoRecurso.transporte,
-    descripcion: 'Traslado Lowboy - Tractor D-6',
-  },
-  lowboyRetroexcavadora: {
-    tipo: TipoRecurso.transporte,
-    descripcion: 'Traslado Lowboy - Retroexcavadora',
-  },
-  lowboyCompactador: {
-    tipo: TipoRecurso.transporte,
-    descripcion: 'Traslado Lowboy - Compactador',
-  },
-  lowboyMotoniveladora: {
-    tipo: TipoRecurso.transporte,
-    descripcion: 'Traslado Lowboy - Motoniveladora',
-  },
-  agua: { tipo: TipoRecurso.material, descripcion: 'Agua' },
-  madera: { tipo: TipoRecurso.material, descripcion: 'Madera de pino' },
-  materialSelecto: {
-    tipo: TipoRecurso.material,
-    descripcion: 'Material selecto',
-  },
-  oficial: {
-    tipo: TipoRecurso.mano_obra,
-    descripcion: 'Oficial albañil',
-  },
-  volquetaTransporte: {
-    tipo: TipoRecurso.transporte,
-    descripcion: 'Camión de volteo (Volqueta)',
-  },
-} satisfies Record<string, { tipo: TipoRecurso; descripcion: string }>;
+/**
+ * Receta leída de la base de datos: los `apu_detalle` de una actividad que ya
+ * existe en el catálogo. Es la única fuente de rendimientos del sistema; en el
+ * código no se guardan cantidades ni nombres de recursos.
+ */
+export interface RecetaBd {
+  actividadId: string;
+  nombre: string;
+  unidad: string;
+  detalles: Array<{
+    recursoId: string;
+    cantidadPorUnidad: Prisma.Decimal;
+  }>;
+}
 
-const recetasReferencia: Array<{ patron: RegExp; receta: RecetaBase }> = [
-  {
-    patron: /\blimpieza inicial\b/,
-    receta: {
-      nombre: 'Limpieza inicial',
-      cantidadBase: '10000',
-      lineas: [
-        { ...recurso.ayudante, cantidad: '144' },
-        { ...recurso.camionDosToneladas, cantidad: '16' },
-        { ...recurso.herramientas, cantidad: '16' },
-      ],
-    },
-  },
-  {
-    patron: /\btrazo y nivelacion\b/,
-    receta: {
-      nombre: 'Trazo y nivelación',
-      cantidadBase: '10000',
-      lineas: [
-        { ...recurso.estacionTotal, cantidad: '2' },
-        { ...recurso.camionDosToneladas, cantidad: '6' },
-        { ...recurso.ayudante, cantidad: '48' },
-        { ...recurso.topografo, cantidad: '16' },
-        { ...recurso.dibujante, cantidad: '1' },
-        { ...recurso.madera, cantidad: '100' },
-      ],
-    },
-  },
-  {
-    patron: /\btopografia\b/,
-    receta: {
-      nombre: 'Topografía',
-      cantidadBase: '6',
-      lineas: [
-        { ...recurso.equipoTopografico, cantidad: '2' },
-        { ...recurso.camionDosToneladas, cantidad: '6' },
-        { ...recurso.ayudante, cantidad: '32' },
-        { ...recurso.topografo, cantidad: '48' },
-        { ...recurso.madera, cantidad: '250' },
-      ],
-    },
-  },
-  {
-    patron: /\bmovilizacion y desmovilizacion de equipos\b/,
-    receta: {
-      nombre: 'Movilización y desmovilización de equipos',
-      cantidadBase: '2',
-      lineas: [
-        { ...recurso.lowboyTractor, cantidad: '1' },
-        { ...recurso.lowboyRetroexcavadora, cantidad: '1' },
-        { ...recurso.lowboyCompactador, cantidad: '1' },
-        { ...recurso.lowboyMotoniveladora, cantidad: '1' },
-      ],
-    },
-  },
-  {
-    patron: /\bcorte de terreno con equipo\b/,
-    receta: {
-      nombre: 'Corte de terreno con equipo',
-      cantidadBase: '2588.25',
-      lineas: [
-        { ...recurso.tractor, cantidad: '20' },
-        { ...recurso.retroexcavadora, cantidad: '20' },
-        { ...recurso.ayudante, cantidad: '128' },
-      ],
-    },
-  },
-  {
-    patron: /\bdesalojo de material de corte\b/,
-    receta: {
-      nombre: 'Desalojo de material de corte',
-      cantidadBase: '3364.74',
-      lineas: [
-        { ...recurso.volquete, cantidad: '70.2' },
-        { ...recurso.retroexcavadora, cantidad: '42.12' },
-        { ...recurso.ayudante, cantidad: '96' },
-      ],
-    },
-  },
-  {
-    patron: /\bconformacion y compactacion de terreno\b/,
-    receta: {
-      nombre: 'Conformación y compactación de terreno',
-      cantidadBase: '10000',
-      lineas: [
-        { ...recurso.cisterna, cantidad: '8' },
-        { ...recurso.motoniveladora, cantidad: '12' },
-        { ...recurso.compactador, cantidad: '24' },
-        { ...recurso.ayudante, cantidad: '24' },
-        { ...recurso.operadorCisterna, cantidad: '8' },
-        { ...recurso.operadorMotoniveladora, cantidad: '12' },
-        { ...recurso.operadorCompactador, cantidad: '24' },
-        { ...recurso.agua, cantidad: '3250' },
-      ],
-    },
-  },
-  {
-    patron: /\b(suministro de material selecto|instalar material selecto|selecto para base)\b/,
-    receta: {
-      nombre: 'Suministro de material selecto para base',
-      cantidadBase: '1922.7',
-      lineas: [
-        { ...recurso.camionMaterialSelecto, cantidad: '161' },
-        { ...recurso.operadorVolquete, cantidad: '161' },
-        { ...recurso.materialSelecto, cantidad: '2499.51' },
-      ],
-    },
-  },
-  {
-    patron: /\brelleno\b.*\bcompactacion\b/,
-    receta: {
-      nombre: 'Relleno, conformación y compactación',
-      cantidadBase: '1479',
-      lineas: [
-        { ...recurso.cisterna, cantidad: '32' },
-        { ...recurso.motoniveladora, cantidad: '20' },
-        { ...recurso.compactador, cantidad: '20' },
-        { ...recurso.retroexcavadora, cantidad: '24' },
-        { ...recurso.ayudante, cantidad: '96' },
-        { ...recurso.operadorCisterna, cantidad: '32' },
-        { ...recurso.operadorMotoniveladora, cantidad: '20' },
-        { ...recurso.operadorCompactador, cantidad: '20' },
-        { ...recurso.operadorRetroexcavadora, cantidad: '24' },
-        { ...recurso.agua, cantidad: '12000' },
-        { ...recurso.madera, cantidad: '300' },
-      ],
-    },
-  },
-  {
-    patron: /\blimpieza final\b/,
-    receta: {
-      nombre: 'Limpieza final y entrega',
-      cantidadBase: '10000',
-      lineas: [
-        { ...recurso.camionDosToneladas, cantidad: '8' },
-        { ...recurso.retroexcavadora, cantidad: '6' },
-        { ...recurso.ayudante, cantidad: '64' },
-      ],
-    },
-  },
+/** Orden fijo de los grupos de la memoria de costos (solo ordena la salida). */
+const ORDEN_TIPOS: TipoRecurso[] = [
+  TipoRecurso.material,
+  TipoRecurso.mano_obra,
+  TipoRecurso.equipo,
+  TipoRecurso.transporte,
 ];
 
-function normalizar(texto: string): string {
+/**
+ * Similitud mínima entre nombres para reutilizar la receta de otra actividad.
+ * Con 0.7 se evita el error típico de tomar la receta de una actividad que solo
+ * comparte parte del nombre: dos nombres que difieren en una palabra dan 0.5 y
+ * pueden significar trabajos distintos. En ese caso se prefiere una receta
+ * aproximada antes que una equivocada.
+ */
+const UMBRAL_COINCIDENCIA = 0.7;
+
+/** Quita tildes, signos y mayúsculas para poder comparar descripciones. */
+export function normalizarTexto(texto: string): string {
   return texto
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-function cantidadPorUnidad(total: string, base: string): Prisma.Decimal {
-  return new Prisma.Decimal(total).div(base).toDecimalPlaces(4);
+/** Palabras significativas (descarta artículos y preposiciones de 1-2 letras). */
+function palabras(texto: string): Set<string> {
+  return new Set(
+    normalizarTexto(texto)
+      .split(' ')
+      .filter((palabra) => palabra.length > 2),
+  );
 }
 
-function cantidadAproximada(unidad: string): {
-  ayudante: string;
-  oficial: string;
-  herramienta: string;
-  maquina: string;
-  transporte: string;
-} {
-  const unidadNormalizada = normalizar(unidad);
-  if (unidadNormalizada === 'm2' || unidadNormalizada === 'm²') {
-    return {
-      ayudante: '0.08',
-      oficial: '0.02',
-      herramienta: '0.02',
-      maquina: '0.01',
-      transporte: '0.005',
-    };
+/** Coeficiente de Dice: 1 = nombres idénticos, 0 = sin palabras en común. */
+function similitud(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+
+  let comunes = 0;
+  for (const palabra of a) {
+    if (b.has(palabra)) comunes += 1;
   }
-  if (unidadNormalizada === 'm3' || unidadNormalizada === 'm³') {
-    return {
-      ayudante: '0.35',
-      oficial: '0.1',
-      herramienta: '0.05',
-      maquina: '0.03',
-      transporte: '0.02',
-    };
-  }
-  if (unidadNormalizada === 'ml' || unidadNormalizada === 'm') {
-    return {
-      ayudante: '0.25',
-      oficial: '0.25',
-      herramienta: '0.03',
-      maquina: '0.02',
-      transporte: '0.01',
-    };
-  }
-  if (unidadNormalizada === 'und' || unidadNormalizada === 'unidad') {
-    return {
-      ayudante: '2',
-      oficial: '1',
-      herramienta: '0.25',
-      maquina: '0.25',
-      transporte: '0.1',
-    };
-  }
-  if (
-    unidadNormalizada === 'gbl' ||
-    unidadNormalizada === 'glb' ||
-    unidadNormalizada === 'global'
-  ) {
-    return {
-      ayudante: '16',
-      oficial: '8',
-      herramienta: '2',
-      maquina: '2',
-      transporte: '1',
-    };
-  }
-  if (unidadNormalizada === 'dia' || unidadNormalizada === 'dias') {
-    return {
-      ayudante: '8',
-      oficial: '4',
-      herramienta: '1',
-      maquina: '1',
-      transporte: '0.5',
-    };
-  }
-  return {
-    ayudante: '1',
-    oficial: '0.25',
-    herramienta: '0.1',
-    maquina: '0.1',
-    transporte: '0.05',
-  };
+
+  return (2 * comunes) / (a.size + b.size);
 }
 
-function construirDesdeLineas(
-  lineas: LineaBase[],
-  cantidadBase: string,
-  recursos: RecursoApuAutomatico[],
-): DetalleApuAutomatico[] {
-  return lineas.map((linea) => {
-    const recursoEncontrado = recursos.find(
-      (item) =>
-        (item.tipo === linea.tipo &&
-          normalizar(item.descripcion) === normalizar(linea.descripcion)) ||
-        (linea.tipo === TipoRecurso.equipo &&
-          linea.descripcion === 'Retroexcavadora de movimiento de tierra' &&
-          normalizar(item.descripcion) ===
-            'retroexcavadora (referencia excel)'),
-    );
+/**
+ * Carga en UNA sola consulta todas las recetas del catálogo agrupadas por
+ * actividad. Se puede llamar una vez por transacción y reutilizar el resultado
+ * en todas las actividades (evita N consultas al importar un PDF completo).
+ */
+export async function cargarRecetasDesdeBd(
+  tx: Prisma.TransactionClient,
+  excluirActividadId?: string,
+): Promise<RecetaBd[]> {
+  const filas = await tx.apuDetalle.findMany({
+    where: excluirActividadId
+      ? { actividadId: { not: excluirActividadId } }
+      : undefined,
+    select: {
+      actividadId: true,
+      recursoId: true,
+      cantidadPorUnidad: true,
+      actividad: { select: { nombre: true, unidad: true } },
+    },
+    orderBy: { actividadId: 'asc' },
+  });
 
-    if (!recursoEncontrado) {
-      throw new InternalServerErrorException(
-        `No se puede generar el APU porque falta el recurso '${linea.descripcion}' en el catálogo. Verifique la carga de recursos predeterminados.`,
-      );
+  const recetas = new Map<string, RecetaBd>();
+
+  for (const fila of filas) {
+    let receta = recetas.get(fila.actividadId);
+    if (!receta) {
+      receta = {
+        actividadId: fila.actividadId,
+        nombre: fila.actividad.nombre,
+        unidad: fila.actividad.unidad,
+        detalles: [],
+      };
+      recetas.set(fila.actividadId, receta);
     }
 
-    return {
-      recursoId: recursoEncontrado.id,
-      tipo: recursoEncontrado.tipo,
-      cantidadPorUnidad: cantidadPorUnidad(linea.cantidad, cantidadBase),
-    };
-  });
-}
-
-function ajustarCantidadMinimaPorUnidad(
-  detalles: DetalleApuAutomatico[],
-): DetalleApuAutomatico[] {
-  return detalles.map((detalle) => ({
-    ...detalle,
-    cantidadPorUnidad: detalle.cantidadPorUnidad.lt(1)
-      ? new Prisma.Decimal(1)
-      : detalle.cantidadPorUnidad,
-  }));
-}
-
-export function construirApuAutomatico(
-  nombre: string,
-  unidad: string,
-  recursos: RecursoApuAutomatico[],
-  _cantidadProyecto: Prisma.Decimal | number | string = 1,
-): ResultadoApuAutomatico {
-  const nombreNormalizado = normalizar(nombre);
-  const referencia = recetasReferencia.find((item) =>
-    item.patron.test(nombreNormalizado),
-  );
-
-  if (referencia) {
-    return {
-      metodo: 'referencia',
-      referencia: `Rendimiento tomado de ${referencia.receta.nombre} en el modelo Excel. Agregue los recursos propios del proyecto que no aparezcan en esta receta.`,
-      detalles: ajustarCantidadMinimaPorUnidad(
-        construirDesdeLineas(
-          referencia.receta.lineas,
-          referencia.receta.cantidadBase,
-          recursos,
-        ),
-      ),
-    };
-  }
-
-  const factores = cantidadAproximada(unidad);
-  const lineas: LineaBase[] = [
-    { ...recurso.ayudante, cantidad: factores.ayudante },
-    { ...recurso.herramientas, cantidad: factores.herramienta },
-  ];
-
-  const actividadDeAlbanileria =
-    /\b(concreto|adoquin|bordillo|cuneta|viga|tuberia|demolicion|reparacion)\b/.test(
-      nombreNormalizado,
-    );
-  if (actividadDeAlbanileria) {
-    lineas.push({ ...recurso.oficial, cantidad: factores.oficial });
-  }
-
-  const requiereMaquinaria =
-    /\b(corte|excavacion|demolicion|compactacion|adoquin|bordillo|cuneta|viga|concreto|relleno|tuberia|prueba)\b/.test(
-      nombreNormalizado,
-    );
-  if (requiereMaquinaria) {
-    lineas.push({
-      ...(nombreNormalizado.includes('compactacion') ||
-      nombreNormalizado.includes('adoquin')
-        ? recurso.compactador
-        : recurso.retroexcavadora),
-      cantidad: factores.maquina,
+    receta.detalles.push({
+      recursoId: fila.recursoId,
+      cantidadPorUnidad: fila.cantidadPorUnidad,
     });
   }
 
-  const requiereTransporte =
-    /\b(desalojo|retiro|acarreo|transporte|movilizacion|suministro)\b/.test(
-      nombreNormalizado,
+  return [...recetas.values()];
+}
+
+/**
+ * Busca en las recetas de la BD la que más se parece al nombre de la actividad.
+ * No filtra por umbral; solo devuelve la mejor candidata (o null si no hay).
+ */
+export function elegirRecetaSimilar(
+  actividad: { nombre: string; unidad: string },
+  recetas: RecetaBd[],
+): { receta: RecetaBd; puntaje: number } | null {
+  const palabrasActividad = palabras(actividad.nombre);
+  const unidadActividad = normalizarTexto(actividad.unidad);
+
+  let mejor: { receta: RecetaBd; puntaje: number } | null = null;
+
+  for (const receta of recetas) {
+    if (receta.detalles.length === 0) continue;
+
+    let puntaje = similitud(palabrasActividad, palabras(receta.nombre));
+    if (normalizarTexto(receta.unidad) === unidadActividad) {
+      puntaje += 0.1;
+    }
+
+    if (!mejor || puntaje > mejor.puntaje) {
+      mejor = { receta, puntaje };
+    }
+  }
+
+  return mejor;
+}
+
+/**
+ * Receta aproximada construida con el catálogo de la BD: elige, para cada tipo
+ * de recurso, el que más se usa en las recetas existentes (desempate alfabético).
+ * Si la BD todavía no tiene recetas, toma el primer recurso activo de cada tipo.
+ *
+ * La cantidad usada es 1 por unidad de actividad: es un valor neutro, no un
+ * rendimiento inventado. El usuario debe ajustar el APU antes de aprobarlo.
+ */
+export function recetaAproximadaDesdeBd(
+  recursos: RecursoApuAutomatico[],
+  recetas: RecetaBd[],
+  actividadNombre: string = '',
+): DetalleApuAutomatico[] {
+  if (recursos.length === 0) {
+    throw new InternalServerErrorException(
+      'No hay recursos activos en el catálogo. Cargue recursos antes de generar un APU automático.',
     );
-  if (requiereTransporte) {
-    lineas.push({ ...recurso.volquetaTransporte, cantidad: factores.transporte });
+  }
+
+  const uso = new Map<string, number>();
+  for (const receta of recetas) {
+    for (const detalle of receta.detalles) {
+      uso.set(detalle.recursoId, (uso.get(detalle.recursoId) ?? 0) + 1);
+    }
+  }
+
+  const palabrasActividad = palabras(actividadNombre);
+  const detalles: DetalleApuAutomatico[] = [];
+
+  for (const tipo of ORDEN_TIPOS) {
+    const candidatos = recursos.filter((recurso) => recurso.tipo === tipo);
+    if (candidatos.length === 0) continue;
+
+    const elegido = candidatos.reduce((mejor, actual) => {
+      const palabrasActual = palabras(actual.descripcion);
+      const palabrasMejor = palabras(mejor.descripcion);
+
+      let comunActual = 0;
+      for (const p of palabrasActividad) {
+        if (palabrasActual.has(p)) comunActual++;
+      }
+
+      let comunMejor = 0;
+      for (const p of palabrasActividad) {
+        if (palabrasMejor.has(p)) comunMejor++;
+      }
+
+      if (comunActual !== comunMejor) {
+        return comunActual > comunMejor ? actual : mejor;
+      }
+
+      const usoActual = uso.get(actual.id) ?? 0;
+      const usoMejor = uso.get(mejor.id) ?? 0;
+
+      if (usoActual !== usoMejor) {
+        return usoActual > usoMejor ? actual : mejor;
+      }
+
+      return actual.descripcion.localeCompare(mejor.descripcion, 'es') < 0
+        ? actual
+        : mejor;
+    });
+
+    detalles.push({
+      recursoId: elegido.id,
+      tipo,
+      cantidadPorUnidad: new Prisma.Decimal(1),
+    });
+  }
+
+  return detalles;
+}
+
+/**
+ * Genera la receta del APU usando SOLO datos de la BD:
+ *  1. Si hay una actividad parecida con `apu_detalle`, copia sus rendimientos.
+ *  2. Si no, arma una receta aproximada con el catálogo vigente.
+ */
+export async function generarApuDesdeBd(
+  tx: Prisma.TransactionClient,
+  actividad: { id: string; nombre: string; unidad: string },
+  recursos: RecursoApuAutomatico[],
+  recetasCargadas?: RecetaBd[],
+): Promise<ResultadoApuAutomatico> {
+  const recursosPorId = new Map(recursos.map((recurso) => [recurso.id, recurso]));
+
+  const recetas =
+    recetasCargadas ?? (await cargarRecetasDesdeBd(tx, actividad.id));
+
+  const candidata = elegirRecetaSimilar(actividad, recetas);
+
+  if (candidata && candidata.puntaje >= UMBRAL_COINCIDENCIA) {
+    const detalles = candidata.receta.detalles
+      .map((detalle) => {
+        const recurso = recursosPorId.get(detalle.recursoId);
+        // Si el recurso ya no existe o está inactivo, se omite la línea.
+        if (!recurso) return null;
+
+        return {
+          recursoId: recurso.id,
+          tipo: recurso.tipo,
+          cantidadPorUnidad: detalle.cantidadPorUnidad,
+        };
+      })
+      .filter((detalle): detalle is DetalleApuAutomatico => detalle !== null);
+
+    if (detalles.length > 0) {
+      return {
+        metodo: 'referencia',
+        referencia: `Rendimiento tomado de la actividad "${candidata.receta.nombre}" del catálogo (coincidencia ${candidata.puntaje.toFixed(2)}). Agregue los recursos propios del proyecto que no aparezcan en esta receta.`,
+        detalles,
+      };
+    }
   }
 
   return {
     metodo: 'aproximado',
     referencia:
-      'Rendimiento aproximado por unidad. Revise las cantidades y agregue los materiales que no tengan precio en el catálogo antes de aprobar el presupuesto.',
-    detalles: ajustarCantidadMinimaPorUnidad(
-      construirDesdeLineas(lineas, '1', recursos),
-    ),
+      'Rendimiento aproximado armado con el catálogo de recursos vigente (asociado por palabras clave). Revise las cantidades y agregue los materiales que no tengan precio en el catálogo antes de aprobar el presupuesto.',
+    detalles: recetaAproximadaDesdeBd(recursos, recetas, actividad.nombre),
   };
 }
 
+/** Costo de la receta calculado en memoria con los precios vigentes. */
+export function calcularCacheDesdeDetalles(
+  detalles: DetalleApuAutomatico[],
+  recursos: RecursoApuAutomatico[],
+) {
+  const precios: Record<string, Prisma.Decimal> = {};
+  for (const recurso of recursos) {
+    precios[recurso.id] = recurso.costoUnitario;
+  }
+
+  return calcularApu(detalles, precios);
+}
+
+/** Guarda (o actualiza) el costo unitario cacheado de una actividad. */
+async function guardarCacheApu(
+  tx: Prisma.TransactionClient,
+  actividadId: string,
+  costo: ReturnType<typeof calcularCacheDesdeDetalles>,
+) {
+  const fechaCalculo = new Date();
+
+  return tx.apuCostoCache.upsert({
+    where: { actividadId },
+    update: { ...costo, fechaCalculo },
+    create: { actividadId, ...costo, fechaCalculo },
+  });
+}
+
+/**
+ * Recalcula el caché de una actividad leyendo su receta actual de la BD.
+ * Se usa al crear, editar o borrar un detalle de APU.
+ */
 export async function recalcularCacheApu(
   tx: Prisma.TransactionClient,
   actividadId: string,
@@ -479,7 +324,7 @@ export async function recalcularCacheApu(
   });
 
   const preciosMap: Record<string, Prisma.Decimal> = {};
-  const detallesCalculo = receta.map((detalle) => {
+  const detalles = receta.map((detalle) => {
     preciosMap[detalle.recursoId] = detalle.recurso.costoUnitario;
     return {
       recursoId: detalle.recursoId,
@@ -488,28 +333,45 @@ export async function recalcularCacheApu(
     };
   });
 
-  const costoCalculado = calcularApu(detallesCalculo, preciosMap);
-  const fechaCalculo = new Date();
-
-  return tx.apuCostoCache.upsert({
-    where: { actividadId },
-    update: { ...costoCalculado, fechaCalculo },
-    create: { actividadId, ...costoCalculado, fechaCalculo },
-  });
+  return guardarCacheApu(
+    tx,
+    actividadId,
+    calcularApu(detalles, preciosMap),
+  );
 }
 
+/**
+ * Crea la receta del APU y su caché dentro de una transacción abierta.
+ *
+ * El costo se calcula en memoria con los `recursos` que ya vienen cargados,
+ * así no se hace una consulta extra por actividad (fue la causa del error
+ * P2028 al importar pliegos grandes).
+ *
+ * No borra detalles previos: los llamadores lo usan solo cuando la actividad
+ * todavía no tiene APU (`activities.service` la acaba de crear y
+ * `apus.service` verifica que `apuDetalles` esté vacío).
+ *
+ * @param recetasCargadas recetas ya leídas de la BD; si se omite, se consultan.
+ */
 export async function crearApuAutomaticoEnTransaccion(
   tx: Prisma.TransactionClient,
   actividad: { id: string; nombre: string; unidad: string },
   recursos: RecursoApuAutomatico[],
-  cantidadProyecto: Prisma.Decimal | number | string = 1,
+  _cantidadProyecto: Prisma.Decimal | number | string = 1,
+  recetasCargadas?: RecetaBd[],
 ) {
-  const resultado = construirApuAutomatico(
-    actividad.nombre,
-    actividad.unidad,
+  const resultado = await generarApuDesdeBd(
+    tx,
+    actividad,
     recursos,
-    cantidadProyecto,
+    recetasCargadas,
   );
+
+  if (resultado.detalles.length === 0) {
+    throw new InternalServerErrorException(
+      `No se pudo generar el APU de "${actividad.nombre}": el catálogo de recursos no tiene líneas utilizables.`,
+    );
+  }
 
   await tx.apuDetalle.createMany({
     data: resultado.detalles.map((detalle) => ({
@@ -519,6 +381,11 @@ export async function crearApuAutomaticoEnTransaccion(
     })),
   });
 
-  const cache = await recalcularCacheApu(tx, actividad.id);
+  const cache = await guardarCacheApu(
+    tx,
+    actividad.id,
+    calcularCacheDesdeDetalles(resultado.detalles, recursos),
+  );
+
   return { ...resultado, cache };
 }

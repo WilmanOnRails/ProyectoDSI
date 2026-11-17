@@ -6,23 +6,21 @@ import {
 import { Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import {
+  calcularLineaDesdeApu,
   calcularResumenPresupuesto,
   calcularTotalesLinea,
+  type PorcentajesPresupuesto,
 } from '../calculos/calculos.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AgregarItemDto } from './dto/agregar-item.dto.js';
 import { CreatePresupuestoDto } from './dto/create-presupuesto.dto.js';
 import { QueryPresupuestoResumenDto } from './dto/query-presupuesto-resumen.dto.js';
 import { UpdatePresupuestoDto } from './dto/update-presupuesto.dto.js';
-
-/** Porcentajes que vienen SIEMPRE del módulo de Configuración. */
-type PorcentajesCalculo = {
-  pctIndirectos: Prisma.Decimal;
-  pctAdministracion: Prisma.Decimal;
-  pctUtilidad: Prisma.Decimal;
-  pctImprevistos: Prisma.Decimal;
-  pctImpuestos: Prisma.Decimal;
-};
+import {
+  porcentajesDesdeConfig,
+  recalcularTotalesPresupuesto,
+  sincronizarPresupuestoDesdeApus,
+} from './recalculo-presupuesto.js';
 
 type PresupuestoConItems = Prisma.PresupuestoGetPayload<{
   include: { proyecto: true; items: { include: { actividad: true } } };
@@ -100,7 +98,7 @@ export class PresupuestosService {
       this.prisma.configuracion.findUnique({ where: { id: 1 } }),
     ]);
 
-    const porcentajes = this.porcentajesDesdeConfig(config);
+    const porcentajes = porcentajesDesdeConfig(config);
     return presupuestos.map((p) => this.conResumenCalculado(p, porcentajes));
   }
 
@@ -182,31 +180,8 @@ export class PresupuestosService {
       throw new NotFoundException(`Presupuesto con ID ${id} no encontrado`);
     }
 
-    const porcentajes = this.porcentajesDesdeConfig(config);
+    const porcentajes = porcentajesDesdeConfig(config);
     return this.conResumenCalculado(presupuesto, porcentajes);
-  }
-
-  /**
-   * Lee los porcentajes del módulo de Configuración.
-   * Si todavía no existe el registro, usa los valores por defecto del sistema.
-   */
-  private porcentajesDesdeConfig(
-    config: {
-      pctIndirectosDef: Prisma.Decimal;
-      pctAdministracionDef: Prisma.Decimal;
-      pctUtilidadDef: Prisma.Decimal;
-      pctImpuestosDef: Prisma.Decimal;
-      pctImprevistosDef: Prisma.Decimal;
-    } | null,
-  ): PorcentajesCalculo {
-    return {
-      pctIndirectos: config?.pctIndirectosDef ?? new Prisma.Decimal(5),
-      pctAdministracion:
-        config?.pctAdministracionDef ?? new Prisma.Decimal(8),
-      pctUtilidad: config?.pctUtilidadDef ?? new Prisma.Decimal(10),
-      pctImprevistos: config?.pctImprevistosDef ?? new Prisma.Decimal(0),
-      pctImpuestos: config?.pctImpuestosDef ?? new Prisma.Decimal(15),
-    };
   }
 
   /**
@@ -216,7 +191,7 @@ export class PresupuestosService {
    */
   private conResumenCalculado(
     presupuesto: PresupuestoConItems,
-    porcentajes: PorcentajesCalculo,
+    porcentajes: PorcentajesPresupuesto,
   ) {
     const items = presupuesto.items.map((item) => {
       const linea = calcularTotalesLinea(item);
@@ -271,7 +246,7 @@ export class PresupuestosService {
         include: { proyecto: true, items: true },
       });
 
-      return this.recalcularTotalesPresupuesto(tx, id);
+      return recalcularTotalesPresupuesto(tx, id);
     });
   }
 
@@ -308,24 +283,9 @@ export class PresupuestosService {
     }
 
     const cache = actividad.apuCostoCache;
-    const costoUnitarioCongelado = cache.costoTotal;
-    const costoMaterialesCong = cache.costoMateriales;
-    const costoManoObraCong = cache.costoManoObra;
-    const costoEquipoCong = cache.costoEquipo;
-    const costoTransporteCong = cache.costoTransporte;
-    const totalCongelado = costoMaterialesCong
-      .add(costoManoObraCong)
-      .add(costoEquipoCong)
-      .add(costoTransporteCong);
-    const totales = calcularTotalesLinea({
-      cantidadProyecto,
-      costoUnitarioCongelado,
-      costoMaterialesCong,
-      costoManoObraCong,
-      costoEquipoCong,
-      costoTransporteCong,
-      total: totalCongelado,
-    });
+    // Copia el importe congelado del APU. El P.U. se obtiene dividiéndolo
+    // entre la cantidad del proyecto cuando se muestra la línea.
+    const linea = calcularLineaDesdeApu(cache);
 
     return this.prisma.$transaction(async (tx) => {
       await tx.presupuestoItem.upsert({
@@ -334,27 +294,17 @@ export class PresupuestosService {
         },
         update: {
           cantidadProyecto,
-          costoUnitarioCongelado,
-          costoMaterialesCong,
-          costoManoObraCong,
-          costoEquipoCong,
-          costoTransporteCong,
-          total: totales.sumaTotal,
+          ...linea,
         },
         create: {
           presupuestoId,
           actividadId,
           cantidadProyecto,
-          costoUnitarioCongelado,
-          costoMaterialesCong,
-          costoManoObraCong,
-          costoEquipoCong,
-          costoTransporteCong,
-          total: totales.sumaTotal,
+          ...linea,
         },
       });
 
-      return this.recalcularTotalesPresupuesto(tx, presupuestoId);
+      return recalcularTotalesPresupuesto(tx, presupuestoId);
     });
   }
 
@@ -371,69 +321,7 @@ export class PresupuestosService {
 
     return this.prisma.$transaction(async (tx) => {
       await tx.presupuestoItem.delete({ where: { id: itemId } });
-      return this.recalcularTotalesPresupuesto(tx, presupuestoId);
-    });
-  }
-
-  /**
-   * Recalcula los costos directos y aplica la fórmula en CASCADA
-   * usando la función pura calcularResumenPresupuesto.
-   *
-   * El costo directo se obtiene SIEMPRE de la suma de las líneas
-   * (Total Mat + Total M.O. + Total Eq. + Total Trans), nunca de
-   * `item.total` ni de `costoUnitarioCongelado`.
-   */
-  private async recalcularTotalesPresupuesto(
-    tx: Prisma.TransactionClient,
-    presupuestoId: string,
-  ) {
-    const presupuesto = await tx.presupuesto.findUnique({
-      where: { id: presupuestoId },
-      include: { items: true },
-    });
-
-    if (!presupuesto) return null;
-
-    // Los porcentajes se toman SIEMPRE del módulo de Configuración.
-    const config = await tx.configuracion.findUnique({ where: { id: 1 } });
-    const porcentajes = this.porcentajesDesdeConfig(config);
-
-    // Mantenemos PresupuestoItem.total sincronizado con la suma de sus
-    // componentes. La fuente de verdad sigue siendo la suma de líneas.
-    for (const item of presupuesto.items) {
-      const linea = calcularTotalesLinea(item);
-      if (!item.total.equals(linea.sumaTotal)) {
-        await tx.presupuestoItem.update({
-          where: { id: item.id },
-          data: { total: linea.sumaTotal },
-        });
-      }
-    }
-
-    const resumen = calcularResumenPresupuesto(presupuesto.items, porcentajes);
-
-    return tx.presupuesto.update({
-      where: { id: presupuestoId },
-      data: {
-        pctIndirectos: porcentajes.pctIndirectos,
-        pctAdministracion: porcentajes.pctAdministracion,
-        pctUtilidad: porcentajes.pctUtilidad,
-        pctImprevistos: porcentajes.pctImprevistos,
-        pctImpuestos: porcentajes.pctImpuestos,
-        costosDirectos: resumen.costosDirectos,
-        costoMateriales: resumen.costoMateriales,
-        costoManoObra: resumen.costoManoObra,
-        costoEquipo: resumen.costoEquipo,
-        costoTransporte: resumen.costoTransporte,
-        indirectos: resumen.indirectos,
-        administracion: resumen.administracion,
-        utilidad: resumen.utilidad,
-        imprevistos: resumen.imprevistos,
-        subtotalNeto: resumen.subtotalNeto,
-        impuestos: resumen.impuestos,
-        total: resumen.total,
-      },
-      include: { proyecto: true, items: { include: { actividad: true } } },
+      return recalcularTotalesPresupuesto(tx, presupuestoId);
     });
   }
 
@@ -497,18 +385,19 @@ export class PresupuestosService {
         const cant = Number(item.cantidadProyecto);
         const linea = calcularTotalesLinea(item);
 
-        // Usamos las P.U. calculadas por la misma función que alimenta la pantalla.
-        const puMat = Number(item.puMateriales ?? 0);
-        const puMo = Number(item.puManoObra ?? 0);
-        const puEq = Number(item.puEquipo ?? 0);
-        const puTr = Number(item.puTransporte ?? 0);
-        const puTotal = Number(item.puTotal ?? puMat + puMo + puEq + puTr);
+        // Usamos siempre la función pura para garantizar que todas las filas
+        // tengan sus P.U. y totales calculados correctamente sin depender del origen.
+        const puMat = Number(linea.puMateriales);
+        const puMo = Number(linea.puManoObra);
+        const puEq = Number(linea.puEquipo);
+        const puTr = Number(linea.puTransporte);
+        const puTotal = Number(linea.puTotal);
 
-        const totalMat = item.totalMateriales ?? linea.totalMateriales;
-        const totalMo = item.totalManoObra ?? linea.totalManoObra;
-        const totalEq = item.totalEquipo ?? linea.totalEquipo;
-        const totalTr = item.totalTransporte ?? linea.totalTransporte;
-        const sumaTotal = item.sumaTotal ?? linea.sumaTotal;
+        const totalMat = linea.totalMateriales;
+        const totalMo = linea.totalManoObra;
+        const totalEq = linea.totalEquipo;
+        const totalTr = linea.totalTransporte;
+        const sumaTotal = linea.sumaTotal;
 
         capMat = capMat.add(totalMat);
         capMo = capMo.add(totalMo);
@@ -576,62 +465,16 @@ export class PresupuestosService {
     return Buffer.from(buffer);
   }
 
+  /**
+   * Refresca las líneas del presupuesto con el costo actual de cada APU.
+   * Esto mismo se hace automáticamente al editar un APU o un precio; el
+   * endpoint sirve para forzar la sincronización cuando se necesite.
+   */
   async sincronizarCostos(presupuestoId: string) {
-    const presupuesto = await this.prisma.presupuesto.findUnique({
-      where: { id: presupuestoId },
-      include: {
-        items: {
-          include: {
-            actividad: {
-              include: { apuCostoCache: true },
-            },
-          },
-        },
-      },
-    });
+    await this.findOne(presupuestoId);
 
-    if (!presupuesto) {
-      throw new NotFoundException(`Presupuesto con ID ${presupuestoId} no encontrado`);
-    }
-
-    return this.prisma.$transaction(async (tx) => {
-      for (const item of presupuesto.items) {
-        const cache = item.actividad.apuCostoCache;
-        if (cache) {
-          const costoUnitarioCongelado = cache.costoTotal;
-          const costoMaterialesCong = cache.costoMateriales;
-          const costoManoObraCong = cache.costoManoObra;
-          const costoEquipoCong = cache.costoEquipo;
-          const costoTransporteCong = cache.costoTransporte;
-          const totalCongelado = costoMaterialesCong
-            .add(costoManoObraCong)
-            .add(costoEquipoCong)
-            .add(costoTransporteCong);
-          const totales = calcularTotalesLinea({
-            cantidadProyecto: item.cantidadProyecto,
-            costoUnitarioCongelado,
-            costoMaterialesCong,
-            costoManoObraCong,
-            costoEquipoCong,
-            costoTransporteCong,
-            total: totalCongelado,
-          });
-
-          await tx.presupuestoItem.update({
-            where: { id: item.id },
-            data: {
-              costoUnitarioCongelado,
-              costoMaterialesCong,
-              costoManoObraCong,
-              costoEquipoCong,
-              costoTransporteCong,
-              total: totales.sumaTotal,
-            },
-          });
-        }
-      }
-
-      return this.recalcularTotalesPresupuesto(tx, presupuestoId);
-    });
+    return this.prisma.$transaction((tx) =>
+      sincronizarPresupuestoDesdeApus(tx, presupuestoId),
+    );
   }
 }
