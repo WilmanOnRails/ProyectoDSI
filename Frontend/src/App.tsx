@@ -12,6 +12,7 @@ const Projects = lazy(() => import("./pages/Projects.tsx"));
 const Activities = lazy(() => import("./pages/Activities.tsx"));
 const Budgets = lazy(() => import("./pages/Budgets"));
 const Resources = lazy(() => import("./pages/Resources.tsx"));
+const Reports = lazy(() => import("./pages/Reports.tsx"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage.tsx"));
 const Users = lazy(() => import("./pages/Users.tsx"));
 
@@ -35,6 +36,7 @@ export default function App() {
               <Route path="/actividades" element={<Activities />} />
               <Route path="/presupuestos" element={<Budgets />} />
               <Route path="/recursos" element={<Resources />} />
+              <Route path="/reportes" element={<Reports />} />
               <Route path="/configuracion" element={<SettingsPage />} />
               <Route path="/usuarios" element={<Users />} />
             </Route>

@@ -30,6 +30,8 @@ export interface AuthenticatedUser {
 
 export interface LoginResponse {
   access_token: string;
+  /** Solo se entrega cuando el usuario tildó "Recordarme". */
+  refresh_token?: string;
   user: AuthenticatedUser;
 }
 
@@ -102,7 +104,7 @@ export class AuthService {
       role: user.rol,
     });
 
-    return {
+    const response: LoginResponse = {
       access_token: accessToken,
       user: {
         id: user.id,
@@ -111,6 +113,118 @@ export class AuthService {
         rol: user.rol,
       },
     };
+
+    if (credentials.remember) {
+      response.refresh_token = await this.createRefreshToken(user.id);
+    }
+
+    return response;
+  }
+
+  /** Duración de la sesión recordada, configurable desde REFRESH_TOKEN_TTL_DAYS. */
+  private refreshTtlMs(): number {
+    const configurado = Number(
+      this.configService.get<string>('REFRESH_TOKEN_TTL_DAYS', '30'),
+    );
+    const dias = Number.isFinite(configurado) && configurado > 0 ? configurado : 30;
+    return dias * 24 * 60 * 60 * 1000;
+  }
+
+  /** En la base solo guardamos el hash: nunca el token en texto plano. */
+  private hashRefreshToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private async createRefreshToken(usuarioId: string): Promise<string> {
+    const token = randomBytes(48).toString('hex');
+    await this.prisma.refreshToken.create({
+      data: {
+        usuarioId,
+        tokenHash: this.hashRefreshToken(token),
+        expiresAt: new Date(Date.now() + this.refreshTtlMs()),
+      },
+    });
+    return token;
+  }
+
+  /**
+   * Renueva el access token sin pedir la contraseña. El refresh token se rota:
+   * el usado queda revocado y se entrega uno nuevo (así se detecta un robo).
+   */
+  async refresh(refreshToken: string): Promise<LoginResponse> {
+    const tokenHash = this.hashRefreshToken(refreshToken);
+    const registro = await this.prisma.refreshToken.findUnique({
+      where: { tokenHash },
+      include: { usuario: true },
+    });
+
+    if (
+      !registro ||
+      registro.revokedAt !== null ||
+      registro.expiresAt <= new Date()
+    ) {
+      throw new UnauthorizedException(
+        'La sesión venció o ya fue cerrada. Inicia sesión nuevamente.',
+      );
+    }
+    if (!registro.usuario.activo) {
+      throw new UnauthorizedException('Tu cuenta no está activa');
+    }
+
+    const [accessToken, nuevoRefreshToken] = await this.prisma.$transaction(
+      async (transaction) => {
+        // El updateMany evita que dos renovaciones simultáneas usen el mismo token.
+        const revocado = await transaction.refreshToken.updateMany({
+          where: { id: registro.id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        if (revocado.count !== 1) {
+          throw new UnauthorizedException(
+            'La sesión ya fue renovada. Inicia sesión nuevamente.',
+          );
+        }
+
+        const token = randomBytes(48).toString('hex');
+        await transaction.refreshToken.create({
+          data: {
+            usuarioId: registro.usuarioId,
+            tokenHash: this.hashRefreshToken(token),
+            expiresAt: new Date(Date.now() + this.refreshTtlMs()),
+          },
+        });
+
+        const access = await this.jwtService.signAsync({
+          id: registro.usuario.id,
+          email: registro.usuario.email,
+          role: registro.usuario.rol,
+        });
+
+        return [access, token] as const;
+      },
+    );
+
+    return {
+      access_token: accessToken,
+      refresh_token: nuevoRefreshToken,
+      user: {
+        id: registro.usuario.id,
+        nombre: registro.usuario.nombre,
+        email: registro.usuario.email,
+        rol: registro.usuario.rol,
+      },
+    };
+  }
+
+  /** Revoca la sesión recordada para que ya no pueda renovarse. */
+  async logout(refreshToken: string): Promise<{ message: string }> {
+    await this.prisma.refreshToken.updateMany({
+      where: {
+        tokenHash: this.hashRefreshToken(refreshToken),
+        revokedAt: null,
+      },
+      data: { revokedAt: new Date() },
+    });
+    return { message: 'Sesión cerrada correctamente.' };
   }
 
   async updateProfile(userId: string, data: UpdateProfileDto) {

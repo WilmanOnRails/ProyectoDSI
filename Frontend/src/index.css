@@ -255,7 +255,8 @@ button {
   border-radius: 12px;
   box-shadow: 0 18px 38px rgba(15, 23, 42, 0.16);
   z-index: 1200;
-  overflow: hidden;
+  overflow-y: auto;
+  max-height: min(420px, 70vh);
 }
 
 .notificaciones-cabecera {
@@ -313,6 +314,27 @@ button {
 
 .notificaciones-item:hover {
   background: #f8fafc;
+}
+
+.notificaciones-item-vista {
+  opacity: 0.58;
+}
+
+.notificaciones-item-vista strong {
+  font-weight: 500;
+}
+
+.notificaciones-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .notificaciones-item svg {
@@ -653,6 +675,65 @@ h1 {
   padding: 9px 13px;
   color: #475569;
   font-size: 12px;
+}
+
+.reportes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+.reporte-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+}
+
+.reporte-icono {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.reporte-cuerpo h2 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  color: #172338;
+}
+
+.reporte-cuerpo .muted {
+  margin: 0;
+}
+
+.reporte-filtros {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.reporte-filtros label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.reporte-filtros select {
+  min-width: 170px;
+}
+
+.reporte-card > .primary-button {
+  align-self: flex-start;
 }
 
 .financial-summary {

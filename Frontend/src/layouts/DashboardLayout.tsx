@@ -8,8 +8,10 @@ import {
     AUTH_SESSION_EVENT,
     clearAuthSession,
     getAuthSession,
+    getRefreshToken,
     getUserInitials,
 } from "../services/authSession";
+import { logout } from "../services/auth";
 
 const pageTitles: Record<string, string> = {
     "/": "Dashboard",
@@ -17,6 +19,7 @@ const pageTitles: Record<string, string> = {
     "/actividades": "Actividades de obra",
     "/presupuestos": "Presupuestos",
     "/recursos": "Recursos y precios",
+    "/reportes": "Reportes",
     "/configuracion": "Configuración",
     "/usuarios": "Gestión de usuarios",
 };
@@ -33,7 +36,15 @@ export default function DashboardLayout() {
         return () => window.removeEventListener(AUTH_SESSION_EVENT, refreshSession);
     }, []);
 
-    function handleLogout() {
+    async function handleLogout() {
+        const refreshToken = getRefreshToken();
+        if (refreshToken) {
+            try {
+                await logout(refreshToken);
+            } catch {
+                // Igual cerramos la sesión local si el servidor no responde.
+            }
+        }
         clearAuthSession();
         navigate("/login", { replace: true });
     }

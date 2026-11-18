@@ -18,21 +18,63 @@ type Pendiente = {
 };
 
 const DIAS_RECIENTES = 7;
+const CLAVE_VISTAS = "proyectodsi.notificaciones.vistas";
+
 const money = (valor: string) =>
     `C$ ${Number(valor || 0).toLocaleString("es-NI", {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     })}`;
 
+/** Cada usuario recuerda sus propias notificaciones vistas en este navegador. */
+function claveVistas(usuarioId: string) {
+    return `${CLAVE_VISTAS}.${usuarioId}`;
+}
+
+function leerVistas(usuarioId: string): string[] {
+    try {
+        const guardado = JSON.parse(
+            localStorage.getItem(claveVistas(usuarioId)) ?? "[]",
+        ) as unknown;
+        return Array.isArray(guardado)
+            ? guardado.filter((id): id is string => typeof id === "string")
+            : [];
+    } catch {
+        return [];
+    }
+}
+
+function guardarVistas(usuarioId: string, ids: string[]) {
+    // Nos quedamos con las últimas 200 para que el almacenamiento no crezca sin límite.
+    localStorage.setItem(claveVistas(usuarioId), JSON.stringify(ids.slice(-200)));
+}
+
 export default function Notifications() {
     const navigate = useNavigate();
+    const session = getAuthSession();
+    const usuarioId = session?.user.id ?? "anonimo";
     const [abierto, setAbierto] = useState(false);
     const [pendientes, setPendientes] = useState<Pendiente[]>([]);
     const [cambios, setCambios] = useState<CambioPrecio[]>([]);
+    const [vistas, setVistas] = useState<Set<string>>(
+        () => new Set(leerVistas(usuarioId)),
+    );
     const [cargando, setCargando] = useState(false);
     const [error, setError] = useState("");
     const contenedor = useRef<HTMLDivElement>(null);
-    const esAdmin = getAuthSession()?.user.rol === "administrador";
+    const esAdmin = session?.user.rol === "administrador";
+
+    useEffect(() => {
+        setVistas(new Set(leerVistas(usuarioId)));
+    }, [usuarioId]);
+
+    const marcarVista = useCallback((id: string) => {
+        const actuales = leerVistas(usuarioId);
+        if (actuales.includes(id)) return;
+        const nuevas = [...actuales, id];
+        guardarVistas(usuarioId, nuevas);
+        setVistas(new Set(nuevas));
+    }, [usuarioId]);
 
     const cargar = useCallback(async () => {
         setCargando(true);
@@ -46,11 +88,10 @@ export default function Notifications() {
             ]);
 
             const limite = Date.now() - DIAS_RECIENTES * 24 * 60 * 60 * 1000;
-            setCambios(
-                resumen.ultimasActualizaciones.filter(
-                    (cambio) => new Date(cambio.fecha).getTime() >= limite,
-                ),
+            const cambiosRecientes = resumen.ultimasActualizaciones.filter(
+                (cambio) => new Date(cambio.fecha).getTime() >= limite,
             );
+            setCambios(cambiosRecientes);
             setPendientes(cuentasPendientes);
         } catch {
             setError("No se pudieron cargar las notificaciones.");
@@ -83,11 +124,21 @@ export default function Notifications() {
         };
     }, [abierto]);
 
-    const total = pendientes.length + cambios.length;
+    const total =
+        pendientes.filter((pendiente) => !vistas.has(pendiente.id)).length +
+        cambios.filter((cambio) => !vistas.has(cambio.id)).length;
+    const sinDatos = pendientes.length === 0 && cambios.length === 0;
 
-    function irA(ruta: string) {
+    function irA(ruta: string, id: string) {
+        marcarVista(id);
         setAbierto(false);
         navigate(ruta);
+    }
+
+    function etiquetaVista(id: string) {
+        return vistas.has(id) ? (
+            <small className="notificaciones-tag">Vista</small>
+        ) : null;
     }
 
     return (
@@ -145,8 +196,11 @@ export default function Notifications() {
                     {!cargando && error && (
                         <p className="notificaciones-estado">{error}</p>
                     )}
-                    {!cargando && !error && total === 0 && (
+                    {!cargando && !error && sinDatos && (
                         <p className="notificaciones-estado">No hay notificaciones nuevas.</p>
+                    )}
+                    {!cargando && !error && !sinDatos && total === 0 && (
+                        <p className="notificaciones-estado">Ya viste todas las notificaciones.</p>
                     )}
 
                     {!cargando && pendientes.length > 0 && (
@@ -155,12 +209,13 @@ export default function Notifications() {
                             {pendientes.slice(0, 3).map((pendiente) => (
                                 <button
                                     key={pendiente.id}
-                                    className="notificaciones-item"
+                                    className={`notificaciones-item ${vistas.has(pendiente.id) ? "notificaciones-item-vista" : ""}`}
                                     type="button"
-                                    onClick={() => irA("/usuarios")}
+                                    onClick={() => irA("/usuarios", pendiente.id)}
                                 >
                                     <span>
                                         <strong>{pendiente.nombre}</strong> espera aprobación.
+                                        {etiquetaVista(pendiente.id)}
                                     </span>
                                     <ChevronRight size={15} />
                                 </button>
@@ -179,9 +234,9 @@ export default function Notifications() {
                             {cambios.map((cambio) => (
                                 <button
                                     key={cambio.id}
-                                    className="notificaciones-item"
+                                    className={`notificaciones-item ${vistas.has(cambio.id) ? "notificaciones-item-vista" : ""}`}
                                     type="button"
-                                    onClick={() => irA("/recursos")}
+                                    onClick={() => irA("/recursos", cambio.id)}
                                 >
                                     <span>
                                         <strong>{cambio.descripcion}</strong> ahora {money(cambio.precio)}
@@ -192,6 +247,7 @@ export default function Notifications() {
                                                 month: "short",
                                             })}
                                         </small>
+                                        {etiquetaVista(cambio.id)}
                                     </span>
                                     <ChevronRight size={15} />
                                 </button>

@@ -14,6 +14,7 @@ import { PresupuestosModule } from './presupuestos/presupuestos.module.js';
 import { ScrapingModule } from './scraping/scraping.module.js';
 import { ImportacionesModule } from './importaciones/importaciones.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
+import { ReportesModule } from './reportes/reportes.module.js';
 import { AccessControlModule } from './auth/access-control.module.js';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { resolve } from 'node:path';
@@ -41,6 +42,7 @@ import { resolve } from 'node:path';
     ScrapingModule,
     ImportacionesModule,
     DashboardModule,
+    ReportesModule,
     AccessControlModule,
   ],
   controllers: [HealthController],

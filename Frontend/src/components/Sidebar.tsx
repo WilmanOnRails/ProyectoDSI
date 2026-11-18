@@ -5,6 +5,7 @@ import {
     FolderKanban,
     ClipboardList,
     FileSpreadsheet,
+    FileText,
     Package,
     Settings,
     HardHat,
@@ -25,6 +26,7 @@ const navigation = [
     { label: "Actividades", path: "/actividades", icon: ClipboardList },
     { label: "Presupuestos", path: "/presupuestos", icon: FileSpreadsheet },
     { label: "Recursos y precios", path: "/recursos", icon: Package },
+    { label: "Reportes", path: "/reportes", icon: FileText },
 ];
 
 const preloadPage: Record<string, () => Promise<unknown>> = {
@@ -33,6 +35,7 @@ const preloadPage: Record<string, () => Promise<unknown>> = {
     "/actividades": () => import("../pages/Activities.tsx"),
     "/presupuestos": () => import("../pages/Budgets"),
     "/recursos": () => import("../pages/Resources.tsx"),
+    "/reportes": () => import("../pages/Reports.tsx"),
     "/configuracion": () => import("../pages/SettingsPage.tsx"),
     "/usuarios": () => import("../pages/Users.tsx"),
 };

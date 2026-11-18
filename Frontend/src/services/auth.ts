@@ -1,9 +1,21 @@
 import api from "./api";
 import type { AuthenticatedUser, AuthSession } from "./authSession";
 
-export async function login(email: string, password: string): Promise<AuthSession> {
-    const response = await api.post<AuthSession>("/auth/login", { email, password });
+export async function login(
+    email: string,
+    password: string,
+    remember: boolean,
+): Promise<AuthSession> {
+    const response = await api.post<AuthSession>("/auth/login", {
+        email,
+        password,
+        remember,
+    });
     return response.data;
+}
+
+export async function logout(refreshToken: string): Promise<void> {
+    await api.post("/auth/logout", { refreshToken });
 }
 
 export async function register(

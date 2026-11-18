@@ -11,6 +11,7 @@ import {
 import type { Request } from 'express';
 import { ForgotPasswordDto } from './dto/forgot-password.dto.js';
 import { LoginDto } from './dto/login.dto.js';
+import { RefreshDto } from './dto/refresh.dto.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { ResetPasswordDto } from './dto/reset-password.dto.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
@@ -30,6 +31,18 @@ export class AuthController {
   @Post('register')
   register(@Body() data: RegisterDto) {
     return this.authService.register(data);
+  }
+
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  refresh(@Body() data: RefreshDto) {
+    return this.authService.refresh(data.refreshToken);
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  logout(@Body() data: RefreshDto) {
+    return this.authService.logout(data.refreshToken);
   }
 
   @Post('forgot-password')

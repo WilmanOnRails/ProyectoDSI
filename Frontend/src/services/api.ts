@@ -1,5 +1,12 @@
-import axios from "axios";
-import { clearAuthSession, getAuthToken } from "./authSession";
+import axios, { type AxiosRequestConfig } from "axios";
+import {
+    clearAuthSession,
+    getAuthToken,
+    getRefreshToken,
+    isRememberedSession,
+    saveAuthSession,
+    type AuthSession,
+} from "./authSession";
 
 const getCache = new Map<
   string,
@@ -21,6 +28,42 @@ const api = axios.create({
   },
 });
 
+/** Configuración interna para no renovar en bucle la propia llamada de refresh. */
+type AuthRequestConfig = AxiosRequestConfig & {
+  _skipAuthRefresh?: boolean;
+  _retried?: boolean;
+};
+
+let renovando: Promise<boolean> | undefined;
+
+/** Renueva la sesión una sola vez aunque fallen varias peticiones a la vez. */
+export function refreshAuthSession(): Promise<boolean> {
+  if (!renovando) {
+    renovando = performRefresh().finally(() => {
+      renovando = undefined;
+    });
+  }
+  return renovando;
+}
+
+async function performRefresh(): Promise<boolean> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return false;
+
+  try {
+    const response = await api.post<AuthSession>(
+      "/auth/refresh",
+      { refreshToken },
+      { _skipAuthRefresh: true } as AuthRequestConfig,
+    );
+    // Conservamos si la sesión estaba en localStorage (Recordarme) o no.
+    saveAuthSession(response.data, isRememberedSession());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 api.interceptors.request.use((config) => {
   if (config.method && config.method.toLowerCase() !== "get") {
     getCacheVersion += 1;
@@ -41,13 +84,32 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use(
   (response) => response,
-  (error: unknown) => {
-    if (axios.isAxiosError(error) && error.response?.status === 401) {
-      getCacheVersion += 1;
-      getCache.clear();
-      clearAuthSession();
+  async (error: unknown) => {
+    if (!axios.isAxiosError(error) || error.response?.status !== 401) {
+      return Promise.reject(error);
     }
-    return Promise.reject(error);
+
+    const config = error.config as AuthRequestConfig | undefined;
+    const puedeRenovar =
+        config &&
+        !config._skipAuthRefresh &&
+        !config._retried &&
+        getRefreshToken() !== null;
+
+    if (!puedeRenovar || !config) {
+      clearAuthSession();
+      return Promise.reject(error);
+    }
+
+    config._retried = true;
+    const renovada = await refreshAuthSession();
+    if (!renovada) {
+      clearAuthSession();
+      return Promise.reject(error);
+    }
+
+    // Se repite la petición original; el interceptor de request pone el token nuevo.
+    return api(config);
   },
 );
 

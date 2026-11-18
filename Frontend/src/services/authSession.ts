@@ -7,6 +7,8 @@ export interface AuthenticatedUser {
 
 export interface AuthSession {
     access_token: string;
+    /** Solo existe cuando el usuario tildó "Recordarme". */
+    refresh_token?: string;
     user: AuthenticatedUser;
 }
 
@@ -20,7 +22,10 @@ function decodeTokenExpiration(token: string): number | null {
 
     try {
         const base64 = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
-        const payload = JSON.parse(window.atob(base64)) as { exp?: unknown };
+        // atob exige que la longitud sea múltiplo de 4; sin el relleno, según
+        // el largo del correo, la decodificación fallaba y borraba la sesión.
+        const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+        const payload = JSON.parse(window.atob(padded)) as { exp?: unknown };
         return typeof payload.exp === "number" ? payload.exp * 1000 : null;
     } catch {
         return null;
@@ -59,12 +64,8 @@ function readSession(storage: Storage): AuthSession | null {
         return null;
     }
 
-    const expiresAt = decodeTokenExpiration(value.access_token);
-    if (expiresAt === null || expiresAt <= Date.now()) {
-        storage.removeItem(SESSION_KEY);
-        return null;
-    }
-
+    // No borramos la sesión aunque el access token haya vencido: el refresh
+    // token puede seguir vivo y nos permite renovar sin pedir la contraseña.
     return value;
 }
 
@@ -80,8 +81,22 @@ function removeStoredSessions() {
 export function saveAuthSession(session: AuthSession, remember: boolean) {
     removeStoredSessions();
     const storage = remember ? localStorage : sessionStorage;
-    storage.setItem(SESSION_KEY, JSON.stringify(session));
+    // Sin "Recordarme" no se guarda el refresh token: cerrar la ventana debe
+    // cerrar la sesión también en el servidor.
+    const guardada: AuthSession = remember
+        ? session
+        : { access_token: session.access_token, user: session.user };
+    storage.setItem(SESSION_KEY, JSON.stringify(guardada));
     notifySessionChange();
+}
+
+export function getRefreshToken(): string | null {
+    return getAuthSession()?.refresh_token ?? null;
+}
+
+/** True si la sesión original se guardó en localStorage. */
+export function isRememberedSession(): boolean {
+    return localStorage.getItem(SESSION_KEY) !== null;
 }
 
 export function updateAuthSessionUser(user: AuthenticatedUser) {
@@ -127,6 +142,11 @@ export function canManagePlatformData(): boolean {
 export function getAuthSessionExpiry(): number | null {
     const token = getAuthToken();
     return token ? decodeTokenExpiration(token) : null;
+}
+
+export function isAuthSessionExpired(): boolean {
+    const expiresAt = getAuthSessionExpiry();
+    return expiresAt === null || expiresAt <= Date.now();
 }
 
 export function clearAuthSession() {

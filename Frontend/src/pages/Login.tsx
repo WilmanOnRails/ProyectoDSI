@@ -92,7 +92,7 @@ export default function Login() {
                 return;
             }
 
-            const session = await login(email, password);
+            const session = await login(email, password, remember);
             saveAuthSession(session, remember);
             navigate("/", { replace: true });
         } catch (error: unknown) {
