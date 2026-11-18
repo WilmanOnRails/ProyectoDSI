@@ -1,7 +1,10 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { Download, FileSpreadsheet } from "lucide-react";
+import { Download, FileSpreadsheet, Trash2 } from "lucide-react";
 import api, { apiGet } from "../services/api";
 import HorizontalTable from "../components/HorizontalTable";
+import { canManagePlatformData } from "../services/authSession";
+import { useAlert } from "../components/Alerts";
+import { Spinner, LoadingOverlay } from "../components/Loading";
 
 type Item = {
   id: string;
@@ -107,12 +110,18 @@ const totalTrItem = (item: Item) =>
   lineTotal(item, item.totalTransporte, item.puTransporte, item.costoTransporteCong);
 
 export default function Budgets() {
+  const canEdit = canManagePlatformData();
+  const { mostrarExito, mostrarError } = useAlert();
   const [items, setItems] = useState<BudgetSummary[]>([]);
   const [totalBudgets, setTotalBudgets] = useState(0);
   const [page, setPage] = useState(1);
   const [loadedPage, setLoadedPage] = useState<number | null>(null);
   const [selected, setSelected] = useState<Budget | null>(null);
   const [error, setError] = useState("");
+  const [refresco, setRefresco] = useState(0);
+  const [presupuestoAEliminar, setPresupuestoAEliminar] = useState<BudgetSummary | null>(null);
+  const [eliminandoPresupuesto, setEliminandoPresupuesto] = useState(false);
+  const [exportandoId, setExportandoId] = useState<string | null>(null);
   const loading = loadedPage !== page;
 
   useEffect(() => {
@@ -128,7 +137,10 @@ export default function Budgets() {
         setError("");
       })
       .catch(() => {
-        if (active) setError("No se pudieron cargar los presupuestos.");
+        if (active) {
+          setError("No se pudieron cargar los presupuestos.");
+          mostrarError("No se pudieron cargar los presupuestos.");
+        }
       })
       .finally(() => {
         if (active) setLoadedPage(page);
@@ -137,18 +149,21 @@ export default function Budgets() {
     return () => {
       active = false;
     };
-  }, [page]);
+  }, [page, refresco, mostrarError]);
 
   const open = async (id: string) => {
     try {
       setSelected(await apiGet<Budget>(`/presupuestos/${id}`));
       setError("");
     } catch {
-      setError("No se pudo cargar el detalle del presupuesto.");
+      const aviso = "No se pudo cargar el detalle del presupuesto.";
+      setError(aviso);
+      mostrarError(aviso);
     }
   };
 
   const exportExcel = async (id: string) => {
+    setExportandoId(id);
     try {
       const res = await api.get(`/presupuestos/${id}/excel`, {
         responseType: "blob",
@@ -160,8 +175,38 @@ export default function Budgets() {
       document.body.appendChild(link);
       link.click();
       link.remove();
+      window.URL.revokeObjectURL(url);
+      mostrarExito("Archivo Excel generado correctamente.");
     } catch {
-      setError("No se pudo exportar el archivo Excel.");
+      const aviso = "No se pudo exportar el archivo Excel.";
+      setError(aviso);
+      mostrarError(aviso);
+    } finally {
+      setExportandoId(null);
+    }
+  };
+
+  const confirmarEliminarPresupuesto = async () => {
+    if (!presupuestoAEliminar || eliminandoPresupuesto) return;
+    setEliminandoPresupuesto(true);
+    try {
+      await api.delete(`/presupuestos/${presupuestoAEliminar.id}`);
+      if (selected?.id === presupuestoAEliminar.id) setSelected(null);
+      setPresupuestoAEliminar(null);
+      setRefresco((actual) => actual + 1);
+      mostrarExito("Presupuesto eliminado correctamente.");
+    } catch (err: unknown) {
+      const message = (
+        err as { response?: { data?: { message?: string | string[] } } }
+      ).response?.data?.message;
+      const aviso = Array.isArray(message)
+        ? message.join(", ")
+        : message || "No se pudo eliminar el presupuesto.";
+      setError(aviso);
+      mostrarError(aviso);
+      setPresupuestoAEliminar(null);
+    } finally {
+      setEliminandoPresupuesto(false);
     }
   };
 
@@ -223,6 +268,7 @@ export default function Budgets() {
                 <th>Actividades</th>
                 <th>Total General</th>
                 <th></th>
+                {canEdit && <th></th>}
               </tr>
             </thead>
             <tbody>
@@ -237,16 +283,27 @@ export default function Budgets() {
                       Ver desglose
                     </button>
                   </td>
+                  {canEdit && (
+                    <td>
+                      <button
+                        className="icon-btn-danger"
+                        onClick={() => setPresupuestoAEliminar(x)}
+                        title="Eliminar presupuesto"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
               {!loading && !items.length && (
                 <tr>
-                  <td colSpan={5}>No hay presupuestos registrados.</td>
+                  <td colSpan={canEdit ? 6 : 5}>No hay presupuestos registrados.</td>
                 </tr>
               )}
               {loading && (
                 <tr>
-                  <td colSpan={5}>Cargando presupuestos...</td>
+                  <td colSpan={canEdit ? 6 : 5}>Cargando presupuestos...</td>
                 </tr>
               )}
             </tbody>
@@ -288,9 +345,11 @@ export default function Budgets() {
               <button
                 className="primary-button"
                 onClick={() => void exportExcel(selected.id)}
+                disabled={exportandoId !== null}
                 style={{ display: "flex", alignItems: "center", gap: "6px" }}
               >
-                <Download size={16} /> Exportar Excel
+                {exportandoId === selected.id ? <Spinner size={16} /> : <Download size={16} />}
+                {exportandoId === selected.id ? " Generando Excel..." : " Exportar Excel"}
               </button>
               <button className="secondary-button" onClick={() => setSelected(null)}>
                 Cerrar
@@ -425,6 +484,37 @@ export default function Budgets() {
           </div>
         </section>
       )}
+
+      {presupuestoAEliminar && (
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <h3>¿Estás seguro de eliminar este presupuesto?</h3>
+            <p>
+              Se eliminará <strong>{presupuestoAEliminar.nombre || "el presupuesto"}</strong> y sus
+              ítems. Las actividades del catálogo se conservan.
+            </p>
+            <div className="modal-actions">
+              <button
+                className="secondary-button"
+                onClick={() => setPresupuestoAEliminar(null)}
+                disabled={eliminandoPresupuesto}
+              >
+                Cancelar
+              </button>
+              <button
+                className="primary-button"
+                style={{ background: "#dc2626" }}
+                onClick={() => void confirmarEliminarPresupuesto()}
+                disabled={eliminandoPresupuesto}
+              >
+                {eliminandoPresupuesto ? <><Spinner size={16} /> Eliminando...</> : "Sí, eliminar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {eliminandoPresupuesto && <LoadingOverlay mensaje="Eliminando presupuesto..." />}
     </>
   );
 }

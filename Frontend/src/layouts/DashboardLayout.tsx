@@ -1,8 +1,9 @@
 
 import { useEffect, useState } from "react";
-import { Bell, LogOut, Search } from "lucide-react";
+import { LogOut } from "lucide-react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
+import Notifications from "../components/Notifications";
 import {
     AUTH_SESSION_EVENT,
     clearAuthSession,
@@ -48,12 +49,7 @@ export default function DashboardLayout() {
                     </div>
 
                     <div className="topbar-actions">
-                        <button className="icon-button" aria-label="Buscar">
-                            <Search size={20} />
-                        </button>
-                        <button className="icon-button" aria-label="Notificaciones">
-                            <Bell size={20} />
-                        </button>
+                        <Notifications />
                         <button
                             className="icon-button"
                             type="button"

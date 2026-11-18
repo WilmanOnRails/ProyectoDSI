@@ -2,6 +2,7 @@
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute.tsx";
+import { AlertProvider } from "./components/Alerts.tsx";
 import DashboardLayout from "./layouts/DashboardLayout.tsx";
 
 const Login = lazy(() => import("./pages/Login.tsx"));
@@ -17,27 +18,29 @@ const Users = lazy(() => import("./pages/Users.tsx"));
 export default function App() {
   return (
     <BrowserRouter>
-      <Suspense fallback={<div role="status">Cargando página...</div>}>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/recuperar-contrasena" element={<PasswordRecovery />} />
-          <Route
-            element={
-              <ProtectedRoute>
-                <DashboardLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/proyectos" element={<Projects />} />
-            <Route path="/actividades" element={<Activities />} />
-            <Route path="/presupuestos" element={<Budgets />} />
-            <Route path="/recursos" element={<Resources />} />
-            <Route path="/configuracion" element={<SettingsPage />} />
-            <Route path="/usuarios" element={<Users />} />
-          </Route>
-        </Routes>
-      </Suspense>
+      <AlertProvider>
+        <Suspense fallback={<div role="status">Cargando página...</div>}>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/recuperar-contrasena" element={<PasswordRecovery />} />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <DashboardLayout />
+                </ProtectedRoute>
+              }
+            >
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/proyectos" element={<Projects />} />
+              <Route path="/actividades" element={<Activities />} />
+              <Route path="/presupuestos" element={<Budgets />} />
+              <Route path="/recursos" element={<Resources />} />
+              <Route path="/configuracion" element={<SettingsPage />} />
+              <Route path="/usuarios" element={<Users />} />
+            </Route>
+          </Routes>
+        </Suspense>
+      </AlertProvider>
     </BrowserRouter>
   );
 }

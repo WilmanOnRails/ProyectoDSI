@@ -9,6 +9,8 @@ import {
   getRoleLabel,
   updateAuthSessionUser,
 } from "../services/authSession";
+import { useAlert } from "../components/Alerts";
+import { Spinner } from "../components/Loading";
 
 type Config = {
   empresa?: string;
@@ -34,6 +36,7 @@ const CAMPOS_PORCENTAJE = [
 
 export default function SettingsPage() {
   const canEdit = canManagePlatformData();
+  const { mostrarExito, mostrarError, mostrarAdvertencia } = useAlert();
   const [profile, setProfile] = useState(() => ({
     nombre: getAuthSession()?.user.nombre ?? "",
     email: getAuthSession()?.user.email ?? "",
@@ -43,6 +46,7 @@ export default function SettingsPage() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
   const [profileMessage, setProfileMessage] = useState("");
   const [profileError, setProfileError] = useState("");
   const [form, setForm] = useState<Config>({
@@ -68,12 +72,19 @@ export default function SettingsPage() {
   };
 
   const save = async () => {
+    if (savingConfig) return;
+    setSavingConfig(true);
     try {
       await api.patch("/configuracion", form);
       setMensaje("Configuración guardada correctamente.");
+      mostrarExito("Configuración guardada correctamente.");
       setError("");
     } catch {
-      setError("No se pudo guardar la configuración.");
+      const aviso = "No se pudo guardar la configuración.";
+      setError(aviso);
+      mostrarError(aviso);
+    } finally {
+      setSavingConfig(false);
     }
   };
 
@@ -81,8 +92,10 @@ export default function SettingsPage() {
     event.preventDefault();
     if (savingProfile) return;
     if ((newPassword || confirmPassword) && newPassword !== confirmPassword) {
-      setProfileError("La nueva contraseña y su confirmación no coinciden.");
+      const aviso = "La nueva contraseña y su confirmación no coinciden.";
+      setProfileError(aviso);
       setProfileMessage("");
+      mostrarAdvertencia(aviso);
       return;
     }
 
@@ -102,15 +115,17 @@ export default function SettingsPage() {
       setNewPassword("");
       setConfirmPassword("");
       setProfileMessage("Tu cuenta fue actualizada correctamente.");
+      mostrarExito("Tu cuenta fue actualizada correctamente.");
     } catch (error: unknown) {
       const message = isAxiosError<{ message?: string }>(error)
         ? error.response?.data?.message
         : undefined;
-      setProfileError(
+      const aviso =
         typeof message === "string"
           ? message
-          : "No se pudo actualizar tu cuenta. Inténtalo de nuevo.",
-      );
+          : "No se pudo actualizar tu cuenta. Inténtalo de nuevo.";
+      setProfileError(aviso);
+      mostrarError(aviso);
     } finally {
       setSavingProfile(false);
     }
@@ -219,7 +234,7 @@ export default function SettingsPage() {
               type="submit"
               disabled={savingProfile}
             >
-              {savingProfile ? "Guardando..." : "Guardar cambios de cuenta"}
+              {savingProfile ? <><Spinner size={16} /> Guardando...</> : "Guardar cambios de cuenta"}
             </button>
           </div>
         </form>
@@ -276,8 +291,8 @@ export default function SettingsPage() {
         </div>
 
         {canEdit && (
-          <button className="primary-button" onClick={() => void save()}>
-            Guardar configuración
+          <button className="primary-button" onClick={() => void save()} disabled={savingConfig}>
+            {savingConfig ? <><Spinner size={16} /> Guardando...</> : "Guardar configuración"}
           </button>
         )}
         {mensaje && <div className="import-success">{mensaje}</div>}

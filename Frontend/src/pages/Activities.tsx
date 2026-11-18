@@ -1,7 +1,9 @@
 import { useEffect, useState, useMemo, useRef } from "react";
-import { Pencil, Plus, Trash2, Search, Filter, FolderKanban } from "lucide-react";
+import { Pencil, Plus, Trash2, Search, FolderKanban } from "lucide-react";
 import api from "../services/api";
 import HorizontalTable from "../components/HorizontalTable";
+import { useAlert } from "../components/Alerts";
+import { Spinner } from "../components/Loading";
 
 const ACTIVITY_PAGE_SIZE = 50;
 const RESOURCE_PAGE_SIZE = 100;
@@ -116,6 +118,7 @@ const money = (v: string | number) =>
   `C$ ${Number(v || 0).toLocaleString("es-NI", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function Activities() {
+  const { mostrarExito, mostrarError, mostrarAdvertencia } = useAlert();
   const [items, setItems] = useState<Activity[]>([]);
   const [totalActivities, setTotalActivities] = useState(0);
   const [page, setPage] = useState(1);
@@ -144,11 +147,12 @@ export default function Activities() {
   const [editingBudgetItemId, setEditingBudgetItemId] = useState<string | null>(null);
   const [activityForm, setActivityForm] = useState<ActivityForm>(EMPTY_ACTIVITY_FORM);
   const [savingActivity, setSavingActivity] = useState(false);
+  const [eliminandoActividadId, setEliminandoActividadId] = useState<string | null>(null);
+  const [eliminandoDetalleId, setEliminandoDetalleId] = useState<string | null>(null);
 
   const [proyectoFiltro, setProyectoFiltro] = useState<string>("ALL");
   const [busquedaRecurso, setBusquedaRecurso] = useState("");
   const [busquedaRecursoAplicada, setBusquedaRecursoAplicada] = useState("");
-  const [categoriaFiltro, setCategoriaFiltro] = useState("ALL");
   const selectedActivityId = selected?.id;
 
   useEffect(() => {
@@ -230,7 +234,6 @@ export default function Activities() {
           tipo,
           pagina: 1,
           limite: RESOURCE_PAGE_SIZE,
-          ...(categoriaFiltro !== "ALL" ? { categoria: categoriaFiltro } : {}),
           ...(busquedaRecursoAplicada
             ? { buscar: busquedaRecursoAplicada }
             : {}),
@@ -259,24 +262,20 @@ export default function Activities() {
       active = false;
       controller.abort();
     };
-  }, [
-    selectedActivityId,
-    tipoSeccion,
-    categoriaFiltro,
-    busquedaRecursoAplicada,
-  ]);
+  }, [selectedActivityId, tipoSeccion, busquedaRecursoAplicada]);
 
-  const loadBudgets = async (): Promise<boolean> => {
-    if (budgetsLoaded) return true;
+  const loadBudgets = async (): Promise<BudgetOption[] | null> => {
+    if (budgetsLoaded) return budgets;
 
     try {
       const { data } = await api.get<BudgetOption[]>("/presupuestos");
       setBudgets(data);
       setBudgetsLoaded(true);
-      return true;
+      return data;
     } catch {
       setError("No se pudieron cargar los presupuestos.");
-      return false;
+      mostrarError("No se pudieron cargar los presupuestos.");
+      return null;
     }
   };
 
@@ -424,6 +423,7 @@ export default function Activities() {
         };
       });
       setMensaje("Recurso agregado al APU correctamente.");
+      mostrarExito("Recurso agregado al APU correctamente.");
       setRecursoId("");
       setCantidad("1");
     } catch (err: unknown) {
@@ -445,15 +445,17 @@ export default function Activities() {
               ),
         };
       });
-      setError(
-        message || "No se pudo agregar el recurso al APU.",);
+      const aviso = message || "No se pudo agregar el recurso al APU.";
+      setError(aviso);
+      mostrarError(aviso);
     } finally {
       setSavingApuItem(false);
     }
   };
 
   const removeApuItem = async (apuId: string) => {
-    if (!selected) return;
+    if (!selected || eliminandoDetalleId) return;
+    setEliminandoDetalleId(apuId);
     try {
       const { data } = await api.delete<ApuDeleteResponse>(`/apus/${apuId}`);
       setSelected((actual) =>
@@ -468,13 +470,35 @@ export default function Activities() {
           : actual,
       );
       setMensaje("Recurso eliminado del APU.");
+      mostrarExito("Recurso eliminado del APU.");
     } catch {
-      setError("No se pudo eliminar el recurso del APU.");
+      const aviso = "No se pudo eliminar el recurso del APU.";
+      setError(aviso);
+      mostrarError(aviso);
+    } finally {
+      setEliminandoDetalleId(null);
     }
   };
 
   const abrirNuevaActividad = async () => {
-    if (!(await loadBudgets())) return;
+    const presupuestos = await loadBudgets();
+    if (!presupuestos) return;
+
+    if (projects.length === 0) {
+      const aviso =
+        "No hay proyectos registrados. Crea un proyecto antes de agregar actividades.";
+      setError(aviso);
+      mostrarAdvertencia(aviso);
+      return;
+    }
+    if (presupuestos.length === 0) {
+      const aviso =
+        "No hay presupuestos registrados. No se pueden agregar actividades hasta crear un presupuesto.";
+      setError(aviso);
+      mostrarAdvertencia(aviso);
+      return;
+    }
+
     setEditingActivityId(null);
     setEditingBudgetItemId(null);
     setActivityForm(EMPTY_ACTIVITY_FORM);
@@ -484,7 +508,7 @@ export default function Activities() {
   };
 
   const abrirEdicionActividad = async (activity: Activity) => {
-    if (!(await loadBudgets())) return;
+    if ((await loadBudgets()) === null) return;
     const budgetItem =
       activity.presupuestoItems?.find(
         (item) =>
@@ -558,19 +582,19 @@ export default function Activities() {
       }
 
       await reloadActivities();
-      setMensaje(
-        editingActivityId
-          ? "Actividad actualizada correctamente."
-          : "Actividad agregada al proyecto y presupuesto. Su código y APU se generaron automáticamente.",
-      );
+      const aviso = editingActivityId
+        ? "Actividad actualizada correctamente."
+        : "Actividad agregada al proyecto y presupuesto. Su código y APU se generaron automáticamente.";
+      setMensaje(aviso);
+      mostrarExito(aviso);
       setActivityModalOpen(false);
     } catch (err: unknown) {
       const message = (
         err as { response?: { data?: { message?: string } } }
       ).response?.data?.message;
-      setError(
-        message || "No se pudo guardar la actividad.",
-      );
+      const aviso = message || "No se pudo guardar la actividad.";
+      setError(aviso);
+      mostrarError(aviso);
     } finally {
       setSavingActivity(false);
     }
@@ -584,7 +608,9 @@ export default function Activities() {
           item.presupuesto?.proyecto?.id === proyectoFiltro,
       ) ?? activity.presupuestoItems?.[0];
     if (!budgetItem) {
-      setError("Esta actividad no está asociada a un presupuesto de proyecto.");
+      const aviso = "Esta actividad no está asociada a un presupuesto de proyecto.";
+      setError(aviso);
+      mostrarAdvertencia(aviso);
       return;
     }
     if (
@@ -595,21 +621,26 @@ export default function Activities() {
       return;
     }
 
+    setEliminandoActividadId(activity.id);
     try {
       await api.delete(
         `/activities/${activity.id}/presupuesto-items/${budgetItem.id}`,
       );
       if (selected?.id === activity.id) setSelected(null);
       await reloadActivities();
-      setMensaje("Actividad quitada del proyecto y presupuesto.");
+      const aviso = "Actividad quitada del proyecto y presupuesto.";
+      setMensaje(aviso);
+      mostrarExito(aviso);
       setError("");
     } catch (err: unknown) {
       const message = (
         err as { response?: { data?: { message?: string } } }
       ).response?.data?.message;
-      setError(
-        message || "No se pudo eliminar la actividad.",
-      );
+      const aviso = message || "No se pudo eliminar la actividad.";
+      setError(aviso);
+      mostrarError(aviso);
+    } finally {
+      setEliminandoActividadId(null);
     }
   };
 
@@ -692,14 +723,16 @@ export default function Activities() {
 
       setSelected(apuActualizado);
       setMensaje("Precio y cantidad del recurso actualizados correctamente.");
+      mostrarExito("Precio y cantidad del recurso actualizados correctamente.");
       setDetalleEditando(null);
     } catch (err: unknown) {
       const message = (
         err as { response?: { data?: { message?: string } } }
       ).response?.data?.message;
-      setError(
-        message || "No se pudo completar la edición. Si se cambió el precio, verifica el catálogo de recursos.",
-      );
+      const aviso =
+        message || "No se pudo completar la edición. Si se cambió el precio, verifica el catálogo de recursos.";
+      setError(aviso);
+      mostrarError(aviso);
     } finally {
       setGuardandoEdicion(false);
     }
@@ -765,8 +798,7 @@ export default function Activities() {
             <button
               className="primary-button"
               onClick={() => void abrirNuevaActividad()}
-              disabled={projects.length === 0}
-              title={projects.length === 0 ? "Primero crea un proyecto" : "Agregar actividad"}
+              title="Agregar actividad"
             >
               <Plus size={16} /> Agregar actividad
             </button>
@@ -808,7 +840,7 @@ export default function Activities() {
                         onClick={() => void openApu(x.id, true)}
                         disabled={loadingApuId !== null}
                       >
-                        Configurar APU
+                        {loadingApuId === x.id ? <Spinner size={14} /> : null} Configurar APU
                       </button>
                       <button
                         className="text-link"
@@ -823,8 +855,11 @@ export default function Activities() {
                         onClick={() => void eliminarActividadDelProyecto(x)}
                         title="Quitar actividad del proyecto"
                         style={{ marginLeft: "8px" }}
+                        disabled={eliminandoActividadId !== null}
                       >
-                        <Trash2 size={15} />
+                        {eliminandoActividadId === x.id
+                          ? <Spinner size={15} />
+                          : <Trash2 size={15} />}
                       </button>
                     </td>
                   </tr>
@@ -920,7 +955,7 @@ export default function Activities() {
             </button>
           </div>
 
-          <div className="apu-search-bar" style={{ marginTop: "15px" }}>
+          <div className="apu-search-bar" style={{ marginTop: "15px", gridTemplateColumns: "1fr" }}>
             <div className="search-input-wrapper">
               <Search size={16} />
               <input
@@ -937,24 +972,6 @@ export default function Activities() {
                   setBusquedaRecurso(e.target.value);
                 }}
               />
-            </div>
-            <div className="filter-input-wrapper">
-              <Filter size={16} />
-              <select
-                className="text-input"
-                value={categoriaFiltro}
-                onChange={(e) => {
-                  setResources([]);
-                  setResourcesLoading(true);
-                  setCategoriaFiltro(e.target.value);
-                }}
-              >
-                <option value="ALL">Todas las categorías</option>
-                <option value="Materiales de Construcción">Materiales de Construcción</option>
-                <option value="Mano de Obra">Mano de Obra</option>
-                <option value="Equipos y Maquinaria">Equipos y Maquinaria</option>
-                <option value="Transporte y Acarreo">Transporte y Acarreo</option>
-              </select>
             </div>
           </div>
 
@@ -996,7 +1013,8 @@ export default function Activities() {
               onClick={() => void addApuItem()}
               disabled={savingApuItem || !recursoId}
             >
-              <Plus size={16} /> {savingApuItem ? "Agregando..." : "Agregar a la partida"}
+              {savingApuItem ? <Spinner size={16} /> : <Plus size={16} />}{" "}
+              {savingApuItem ? "Agregando..." : "Agregar a la partida"}
             </button>
           </div>
 
@@ -1034,8 +1052,15 @@ export default function Activities() {
                         <button className="text-link" onClick={() => iniciarEdicion(det)} title="Editar precio y cantidad">
                           <Pencil size={15} />
                         </button>
-                        <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
-                          <Trash2 size={16} />
+                        <button
+                          className="icon-btn-danger"
+                          onClick={() => void removeApuItem(det.id)}
+                          title="Eliminar"
+                          disabled={eliminandoDetalleId !== null}
+                        >
+                          {eliminandoDetalleId === det.id
+                            ? <Spinner size={16} />
+                            : <Trash2 size={16} />}
                         </button>
                       </td>
                     </tr>
@@ -1079,8 +1104,15 @@ export default function Activities() {
                         <button className="text-link" onClick={() => iniciarEdicion(det)} title="Editar precio y horas">
                           <Pencil size={15} />
                         </button>
-                        <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
-                          <Trash2 size={16} />
+                        <button
+                          className="icon-btn-danger"
+                          onClick={() => void removeApuItem(det.id)}
+                          title="Eliminar"
+                          disabled={eliminandoDetalleId !== null}
+                        >
+                          {eliminandoDetalleId === det.id
+                            ? <Spinner size={16} />
+                            : <Trash2 size={16} />}
                         </button>
                       </td>
                     </tr>
@@ -1124,8 +1156,15 @@ export default function Activities() {
                         <button className="text-link" onClick={() => iniciarEdicion(det)} title="Editar precio y cantidad">
                           <Pencil size={15} />
                         </button>
-                        <button className="icon-btn-danger" onClick={() => void removeApuItem(det.id)} title="Eliminar">
-                          <Trash2 size={16} />
+                        <button
+                          className="icon-btn-danger"
+                          onClick={() => void removeApuItem(det.id)}
+                          title="Eliminar"
+                          disabled={eliminandoDetalleId !== null}
+                        >
+                          {eliminandoDetalleId === det.id
+                            ? <Spinner size={16} />
+                            : <Trash2 size={16} />}
                         </button>
                       </td>
                     </tr>
@@ -1197,7 +1236,7 @@ export default function Activities() {
                 onClick={() => void guardarEdicion()}
                 disabled={guardandoEdicion}
               >
-                {guardandoEdicion ? "Guardando..." : "Guardar cambios"}
+                {guardandoEdicion ? <><Spinner size={16} /> Guardando...</> : "Guardar cambios"}
               </button>
             </div>
           </div>
@@ -1389,7 +1428,7 @@ export default function Activities() {
                 disabled={savingActivity || projects.length === 0}
               >
                 {savingActivity
-                  ? "Guardando..."
+                  ? <><Spinner size={16} /> Guardando...</>
                   : editingActivityId
                     ? "Guardar cambios"
                     : "Agregar actividad"}

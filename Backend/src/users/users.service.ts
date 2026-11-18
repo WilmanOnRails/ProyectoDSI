@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   InternalServerErrorException,
@@ -89,6 +90,9 @@ export class UsersService {
     if (pendingUser.activo) {
       throw new ConflictException('El usuario ya tiene acceso a la plataforma');
     }
+    if (rol === Rol.administrador) {
+      throw new BadRequestException('No se puede asignar el rol de administrador.');
+    }
 
     const activation = await this.prisma.usuario.updateMany({
       where: { id, activo: false },
@@ -144,7 +148,26 @@ export class UsersService {
     return usuario;
   }
 
-  async update(id: string, updateUserDto: UpdateUserDto) {
+  async update(
+    id: string,
+    updateUserDto: UpdateUserDto,
+    currentUserId?: string,
+  ) {
+    const cambiaRol = updateUserDto.rol !== undefined;
+    const cambiaEstado = updateUserDto.activo !== undefined;
+
+    if (updateUserDto.rol === Rol.administrador) {
+      throw new BadRequestException('No se puede asignar el rol de administrador.');
+    }
+
+    // Un administrador no puede quitarse su propio rol ni desactivarse,
+    // porque se quedaría sin forma de volver a entrar.
+    if (id === currentUserId && (cambiaRol || updateUserDto.activo === false)) {
+      throw new BadRequestException(
+        'No podés cambiar tu propio rol ni desactivar tu propia cuenta.',
+      );
+    }
+
     const data: Prisma.UsuarioUpdateInput = {};
 
     if (updateUserDto.nombre !== undefined) {
@@ -155,6 +178,12 @@ export class UsersService {
     }
     if (updateUserDto.passwordHash !== undefined) {
       data.passwordHash = await bcrypt.hash(updateUserDto.passwordHash, 10);
+    }
+    if (cambiaRol) {
+      data.rol = updateUserDto.rol;
+    }
+    if (cambiaEstado) {
+      data.activo = updateUserDto.activo;
     }
 
     return this.prisma.usuario.update({

@@ -1,7 +1,9 @@
 import { useEffect, useState, type ChangeEvent } from "react";
-import { FileUp, LoaderCircle, Trash2 } from "lucide-react";
+import { FileUp, Trash2 } from "lucide-react";
 import api, { apiGet } from "../services/api";
 import { canManagePlatformData } from "../services/authSession";
+import { useAlert } from "../components/Alerts";
+import { Spinner, LoadingOverlay } from "../components/Loading";
 
 const ESTADOS_PROYECTO = [
   "En elaboración",
@@ -15,6 +17,7 @@ type Resultado = { mensaje: string; proyecto: Proyecto; presupuesto: { id: strin
 
 export default function Projects() {
   const canEdit = canManagePlatformData();
+  const { mostrarExito, mostrarError, mostrarAdvertencia } = useAlert();
   const [proyectos, setProyectos] = useState<Proyecto[]>([]);
   const [archivo, setArchivo] = useState<File | null>(null);
   const [nombrePresupuesto, setNombrePresupuesto] = useState("Presupuesto base - PLIEGO_1");
@@ -22,6 +25,7 @@ export default function Projects() {
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
   const [proyectoAEliminar, setProyectoAEliminar] = useState<Proyecto | null>(null);
+  const [eliminandoProyecto, setEliminandoProyecto] = useState(false);
   const [estadosActualizando, setEstadosActualizando] = useState<Set<string>>(
     () => new Set(),
   );
@@ -45,7 +49,12 @@ export default function Projects() {
   };
 
   const importar = async () => {
-    if (!archivo) { setError("Seleccioná un archivo PDF antes de importar."); return; }
+    if (!archivo) {
+      const aviso = "Seleccioná un archivo PDF antes de importar.";
+      setError(aviso);
+      mostrarAdvertencia(aviso);
+      return;
+    }
     const form = new FormData();
     form.append("archivo", archivo);
     form.append("nombrePresupuesto", nombrePresupuesto);
@@ -56,23 +65,32 @@ export default function Projects() {
       setResultado(r.data);
       setArchivo(null);
       await cargarProyectos();
+      mostrarExito("Pliego importado correctamente. Se crearon el proyecto y su presupuesto.");
     } catch (e: any) {
       const m = e.response?.data?.message;
-      setError(Array.isArray(m) ? m.join(", ") : m || "No se pudo importar el PDF.");
+      const aviso = Array.isArray(m) ? m.join(", ") : m || "No se pudo importar el PDF.";
+      setError(aviso);
+      mostrarError(aviso);
     } finally {
       setCargando(false);
     }
   };
 
   const confirmarEliminar = async () => {
-    if (!proyectoAEliminar) return;
+    if (!proyectoAEliminar || eliminandoProyecto) return;
+    setEliminandoProyecto(true);
     try {
       await api.delete(`/projects/${proyectoAEliminar.id}`);
       setProyectoAEliminar(null);
       await cargarProyectos();
+      mostrarExito("Proyecto eliminado correctamente.");
     } catch {
-      setError("No se pudo eliminar el proyecto.");
+      const aviso = "No se pudo eliminar el proyecto.";
+      setError(aviso);
+      mostrarError(aviso);
       setProyectoAEliminar(null);
+    } finally {
+      setEliminandoProyecto(false);
     }
   };
 
@@ -101,11 +119,12 @@ export default function Projects() {
             : actual,
         ),
       );
-      setError(
+      const aviso =
         Array.isArray(message)
           ? message.join(", ")
-          : message || "No se pudo actualizar el estado del proyecto.",
-      );
+          : message || "No se pudo actualizar el estado del proyecto.";
+      setError(aviso);
+      mostrarError(aviso);
     } finally {
       setEstadosActualizando((actuales) => {
         const siguientes = new Set(actuales);
@@ -152,7 +171,7 @@ export default function Projects() {
         <label className="file-label" htmlFor="nombre-presupuesto">Nombre del presupuesto</label>
         <input id="nombre-presupuesto" className="text-input" value={nombrePresupuesto} onChange={e => setNombrePresupuesto(e.target.value)} />
         <button className="primary-button" onClick={importar} disabled={cargando}>
-          {cargando ? <LoaderCircle className="spin" size={18} /> : <FileUp size={18} />} {cargando ? "Procesando PDF..." : "Importar pliego"}
+          {cargando ? <Spinner size={18} /> : <FileUp size={18} />} {cargando ? "Procesando PDF..." : "Importar pliego"}
         </button>
         {error && <div className="import-error">{error}</div>}
         {resultado && (
@@ -243,12 +262,27 @@ export default function Projects() {
             <h3>¿Estás seguro de eliminar este proyecto?</h3>
             <p>Se eliminará el proyecto <strong>{proyectoAEliminar.nombre}</strong> y todos sus datos asociados.</p>
             <div className="modal-actions">
-              <button className="secondary-button" onClick={() => setProyectoAEliminar(null)}>No</button>
-              <button className="primary-button" style={{ background: "#dc2626" }} onClick={confirmarEliminar}>Sí, eliminar</button>
+              <button
+                className="secondary-button"
+                onClick={() => setProyectoAEliminar(null)}
+                disabled={eliminandoProyecto}
+              >
+                No
+              </button>
+              <button
+                className="primary-button"
+                style={{ background: "#dc2626" }}
+                onClick={() => void confirmarEliminar()}
+                disabled={eliminandoProyecto}
+              >
+                {eliminandoProyecto ? <><Spinner size={16} /> Eliminando...</> : "Sí, eliminar"}
+              </button>
             </div>
           </div>
         </div>
       )}
+
+      {eliminandoProyecto && <LoadingOverlay mensaje="Eliminando proyecto..." />}
     </>
   );
 }

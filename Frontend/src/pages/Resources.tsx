@@ -3,6 +3,8 @@ import { Edit3, Filter, Package, Plus, Search, Trash2 } from "lucide-react";
 import api, { apiGet } from "../services/api";
 import HorizontalTable from "../components/HorizontalTable";
 import { canManagePlatformData } from "../services/authSession";
+import { useAlert } from "../components/Alerts";
+import { Spinner } from "../components/Loading";
 
 type Resource = {
   id: string;
@@ -54,6 +56,7 @@ const formularioVacio = (): ResourceForm => ({
 
 export default function Resources() {
   const canEdit = canManagePlatformData();
+  const { mostrarExito, mostrarError, mostrarAdvertencia } = useAlert();
   const [items, setItems] = useState<Resource[]>([]);
   const [total, setTotal] = useState(0);
   const [pagina, setPagina] = useState(1);
@@ -72,6 +75,7 @@ export default function Resources() {
   const [categoriaFiltro, setCategoriaFiltro] = useState("ALL");
   const [formulario, setFormulario] = useState<ResourceForm | null>(null);
   const [editandoId, setEditandoId] = useState<string | null>(null);
+  const [precioOriginal, setPrecioOriginal] = useState("");
   const [recursoAEliminar, setRecursoAEliminar] = useState<Resource | null>(null);
   const [guardando, setGuardando] = useState(false);
   const consultaActual = JSON.stringify([
@@ -142,17 +146,21 @@ export default function Resources() {
   const abrirNuevo = () => {
     setFormulario(formularioVacio());
     setEditandoId(null);
+    setPrecioOriginal("");
     setErrorAccion("");
     setMensaje("");
   };
 
   const abrirEdicion = (recurso: Resource) => {
+    const precio = String(recurso.costoUnitario ?? "");
     setFormulario({
       ...formularioVacio(),
       descripcion: recurso.descripcion,
       categoria: recurso.categoria || "",
       unidad: recurso.unidad,
+      costoUnitario: precio,
     });
+    setPrecioOriginal(precio);
     setEditandoId(recurso.id);
     setErrorAccion("");
     setMensaje("");
@@ -176,13 +184,17 @@ export default function Resources() {
         : formulario.unidad.trim();
 
     if (!descripcion || !unidad || (formulario.categoria === NUEVA_OPCION && !categoria)) {
-      setErrorAccion("Completá la descripción, la unidad de medida y la nueva categoría seleccionada.");
+      const aviso = "Completá la descripción, la unidad de medida y la nueva categoría seleccionada.";
+      setErrorAccion(aviso);
+      mostrarAdvertencia(aviso);
       return;
     }
 
     const costoUnitario = Number(formulario.costoUnitario);
-    if (!editandoId && (!Number.isFinite(costoUnitario) || costoUnitario < 0 || !/^\d+(\.\d{1,2})?$/.test(formulario.costoUnitario))) {
-      setErrorAccion("Ingresá un precio válido con hasta dos decimales.");
+    if (!Number.isFinite(costoUnitario) || costoUnitario < 0 || !/^\d+(\.\d{1,2})?$/.test(formulario.costoUnitario.trim())) {
+      const aviso = "Ingresá un precio válido con hasta dos decimales.";
+      setErrorAccion(aviso);
+      mostrarAdvertencia(aviso);
       return;
     }
 
@@ -195,7 +207,20 @@ export default function Resources() {
           categoria: categoria || null,
           unidad,
         });
-        setMensaje("Recurso actualizado correctamente.");
+
+        const precioCambio = Number(formulario.costoUnitario) !== Number(precioOriginal);
+        if (precioCambio) {
+          // Este endpoint guarda el historial y recalcula los APU que usan el recurso.
+          await api.patch(`/recursos/${editandoId}/precio`, {
+            precio: costoUnitario,
+          });
+        }
+
+        const aviso = precioCambio
+          ? "Recurso y precio actualizados. Se recalcularon los APU que lo usan."
+          : "Recurso actualizado correctamente.";
+        setMensaje(aviso);
+        mostrarExito(aviso);
       } else {
         await api.post("/recursos", {
           descripcion,
@@ -206,13 +231,17 @@ export default function Resources() {
           proveedor: formulario.proveedor.trim() || undefined,
         });
         setMensaje("Recurso agregado correctamente.");
+        mostrarExito("Recurso agregado correctamente.");
       }
       setFormulario(null);
       setEditandoId(null);
+      setPrecioOriginal("");
       setRecargar((actual) => actual + 1);
       setPagina(1);
     } catch {
-      setErrorAccion(editandoId ? "No se pudo actualizar el recurso." : "No se pudo agregar el recurso.");
+      const aviso = editandoId ? "No se pudo actualizar el recurso." : "No se pudo agregar el recurso.";
+      setErrorAccion(aviso);
+      mostrarError(aviso);
     } finally {
       setGuardando(false);
     }
@@ -225,10 +254,13 @@ export default function Resources() {
     try {
       await api.delete(`/recursos/${recursoAEliminar.id}`);
       setMensaje("Recurso eliminado del catálogo.");
+      mostrarExito("Recurso eliminado del catálogo.");
       setRecursoAEliminar(null);
       setRecargar((actual) => actual + 1);
     } catch {
-      setErrorAccion("No se pudo eliminar el recurso.");
+      const aviso = "No se pudo eliminar el recurso.";
+      setErrorAccion(aviso);
+      mostrarError(aviso);
     } finally {
       setGuardando(false);
     }
@@ -440,36 +472,39 @@ export default function Resources() {
                   maxLength={30}
                 />
               )}
+              <label style={{ display: "grid", gap: "5px", fontSize: "12px", fontWeight: 600 }}>
+                Precio unitario (C$)
+                <input
+                  className="text-input"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formulario.costoUnitario}
+                  onChange={(e) => actualizarFormulario("costoUnitario", e.target.value)}
+                />
+                {editandoId && (
+                  <small className="muted" style={{ fontWeight: 400 }}>
+                    Si cambiás el precio, se guarda en el historial y se recalculan los APU que usan este recurso.
+                  </small>
+                )}
+              </label>
               {!editandoId && (
-                <>
-                  <label style={{ display: "grid", gap: "5px", fontSize: "12px", fontWeight: 600 }}>
-                    Precio unitario (C$)
-                    <input
-                      className="text-input"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={formulario.costoUnitario}
-                      onChange={(e) => actualizarFormulario("costoUnitario", e.target.value)}
-                    />
-                  </label>
-                  <label style={{ display: "grid", gap: "5px", fontSize: "12px", fontWeight: 600 }}>
-                    Proveedor (opcional)
-                    <input
-                      className="text-input"
-                      value={formulario.proveedor}
-                      onChange={(e) => actualizarFormulario("proveedor", e.target.value)}
-                      maxLength={100}
-                    />
-                  </label>
-                </>
+                <label style={{ display: "grid", gap: "5px", fontSize: "12px", fontWeight: 600 }}>
+                  Proveedor (opcional)
+                  <input
+                    className="text-input"
+                    value={formulario.proveedor}
+                    onChange={(e) => actualizarFormulario("proveedor", e.target.value)}
+                    maxLength={100}
+                  />
+                </label>
               )}
             </div>
             {errorAccion && <div className="import-error" style={{ marginTop: "14px" }}>{errorAccion}</div>}
             <div className="modal-actions" style={{ marginTop: "20px" }}>
-              <button className="secondary-button" onClick={() => { setFormulario(null); setEditandoId(null); }} disabled={guardando}>Cancelar</button>
+              <button className="secondary-button" onClick={() => { setFormulario(null); setEditandoId(null); setPrecioOriginal(""); }} disabled={guardando}>Cancelar</button>
               <button className="primary-button" onClick={() => void guardarRecurso()} disabled={guardando}>
-                {guardando ? "Guardando..." : editandoId ? "Guardar cambios" : "Agregar recurso"}
+                {guardando ? <><Spinner size={16} /> Guardando...</> : editandoId ? "Guardar cambios" : "Agregar recurso"}
               </button>
             </div>
           </div>
@@ -485,7 +520,7 @@ export default function Resources() {
             <div className="modal-actions">
               <button className="secondary-button" onClick={() => setRecursoAEliminar(null)} disabled={guardando}>Cancelar</button>
               <button className="primary-button" style={{ background: "#dc2626" }} onClick={() => void confirmarEliminar()} disabled={guardando}>
-                {guardando ? "Eliminando..." : "Sí, eliminar"}
+                {guardando ? <><Spinner size={16} /> Eliminando...</> : "Sí, eliminar"}
               </button>
             </div>
           </div>

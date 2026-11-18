@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { isAxiosError } from "axios";
-import { Check, LoaderCircle, RefreshCw, Users as UsersIcon } from "lucide-react";
+import { Check, RefreshCw, Users as UsersIcon } from "lucide-react";
 import api, { apiGet } from "../services/api";
 import { getAuthSession } from "../services/authSession";
+import { useAlert } from "../components/Alerts";
+import { Spinner } from "../components/Loading";
 
 type Rol = "administrador" | "presupuestista" | "solo_lectura";
 
@@ -15,10 +17,11 @@ type Usuario = {
     ultimoAcceso: string | null;
 };
 
+// El único administrador ya está definido: desde el panel solo se pueden
+// asignar estos dos roles.
 const roles: { value: Rol; label: string }[] = [
     { value: "presupuestista", label: "Presupuestista" },
     { value: "solo_lectura", label: "Solo lectura" },
-    { value: "administrador", label: "Administrador" },
 ];
 
 function errorText(error: unknown): string {
@@ -31,35 +34,36 @@ function errorText(error: unknown): string {
 }
 
 export default function Users() {
+    const { mostrarExito, mostrarError, mostrarAdvertencia } = useAlert();
     const [usuarios, setUsuarios] = useState<Usuario[]>([]);
     const [rolesSeleccionados, setRolesSeleccionados] = useState<Record<string, Rol>>({});
     const [cargando, setCargando] = useState(true);
     const [procesandoId, setProcesandoId] = useState<string | null>(null);
     const [error, setError] = useState("");
     const [mensaje, setMensaje] = useState("");
-    const isAdmin = getAuthSession()?.user.rol === "administrador";
+    const session = getAuthSession();
+    const isAdmin = session?.user.rol === "administrador";
+    const miId = session?.user.id;
+
+    const aplicarUsuarios = useCallback((result: Usuario[]) => {
+        setUsuarios(result);
+        setRolesSeleccionados(
+            Object.fromEntries(result.map((usuario) => [usuario.id, usuario.rol])) as Record<string, Rol>,
+        );
+    }, []);
 
     const cargarUsuarios = useCallback(async () => {
         setCargando(true);
         setError("");
         try {
             const result = await apiGet<Usuario[]>("/users");
-            setUsuarios(result);
-            setRolesSeleccionados((current) => {
-                const next = { ...current };
-                for (const usuario of result) {
-                    if (!next[usuario.id]) {
-                        next[usuario.id] = "presupuestista";
-                    }
-                }
-                return next;
-            });
+            aplicarUsuarios(result);
         } catch (loadError: unknown) {
             setError(errorText(loadError));
         } finally {
             setCargando(false);
         }
-    }, []);
+    }, [aplicarUsuarios]);
 
     useEffect(() => {
         if (!isAdmin) return;
@@ -67,17 +71,7 @@ export default function Users() {
         let mounted = true;
         apiGet<Usuario[]>("/users")
             .then((result) => {
-                if (!mounted) return;
-                setUsuarios(result);
-                setRolesSeleccionados((current) => {
-                    const next = { ...current };
-                    for (const usuario of result) {
-                        if (!next[usuario.id]) {
-                            next[usuario.id] = "presupuestista";
-                        }
-                    }
-                    return next;
-                });
+                if (mounted) aplicarUsuarios(result);
             })
             .catch((loadError: unknown) => {
                 if (mounted) setError(errorText(loadError));
@@ -89,7 +83,7 @@ export default function Users() {
         return () => {
             mounted = false;
         };
-    }, [isAdmin]);
+    }, [isAdmin, aplicarUsuarios]);
 
     async function aprobar(usuario: Usuario) {
         setProcesandoId(usuario.id);
@@ -99,10 +93,69 @@ export default function Users() {
             await api.post(`/users/${usuario.id}/approve`, {
                 rol: rolesSeleccionados[usuario.id] ?? "presupuestista",
             });
-            setMensaje(`Se aprobó a ${usuario.nombre} y se envió el correo de aviso.`);
+            const aviso = `Se activó la cuenta de ${usuario.nombre} y se envió el correo de aviso.`;
+            setMensaje(aviso);
+            mostrarExito(aviso);
             await cargarUsuarios();
         } catch (approvalError: unknown) {
-            setError(errorText(approvalError));
+            const aviso = errorText(approvalError);
+            setError(aviso);
+            mostrarError(aviso);
+        } finally {
+            setProcesandoId(null);
+        }
+    }
+
+    async function cambiarRol(usuario: Usuario, rol: Rol) {
+        if (usuario.id === miId) {
+            const aviso = "No podés cambiar tu propio rol.";
+            setError(aviso);
+            mostrarAdvertencia(aviso);
+            return;
+        }
+
+        const rolAnterior = rolesSeleccionados[usuario.id] ?? usuario.rol;
+        setRolesSeleccionados((actual) => ({ ...actual, [usuario.id]: rol }));
+        setProcesandoId(usuario.id);
+        setError("");
+        setMensaje("");
+        try {
+            await api.patch(`/users/${usuario.id}`, { rol });
+            const etiqueta = roles.find((item) => item.value === rol)?.label ?? rol;
+            const aviso = `Permisos de ${usuario.nombre} actualizados a ${etiqueta}.`;
+            setMensaje(aviso);
+            mostrarExito(aviso);
+            await cargarUsuarios();
+        } catch (changeError: unknown) {
+            setRolesSeleccionados((actual) => ({ ...actual, [usuario.id]: rolAnterior }));
+            const aviso = errorText(changeError);
+            setError(aviso);
+            mostrarError(aviso);
+        } finally {
+            setProcesandoId(null);
+        }
+    }
+
+    async function desactivar(usuario: Usuario) {
+        if (!window.confirm(
+            `¿Desactivar la cuenta de ${usuario.nombre}? No podrá iniciar sesión hasta que la actives de nuevo.`,
+        )) {
+            return;
+        }
+
+        setProcesandoId(usuario.id);
+        setError("");
+        setMensaje("");
+        try {
+            await api.patch(`/users/${usuario.id}`, { activo: false });
+            const aviso = `La cuenta de ${usuario.nombre} fue desactivada.`;
+            setMensaje(aviso);
+            mostrarExito(aviso);
+            await cargarUsuarios();
+        } catch (deactivateError: unknown) {
+            const aviso = errorText(deactivateError);
+            setError(aviso);
+            mostrarError(aviso);
         } finally {
             setProcesandoId(null);
         }
@@ -117,7 +170,7 @@ export default function Users() {
         );
     }
 
-    const pendientes = usuarios.filter((usuario) => !usuario.activo);
+    const inactivos = usuarios.filter((usuario) => !usuario.activo);
 
     return (
         <>
@@ -126,7 +179,7 @@ export default function Users() {
                     <p className="eyebrow">ADMINISTRACIÓN</p>
                     <h1>Gestión de usuarios</h1>
                     <p className="muted">
-                        Revisá las solicitudes, asigná un rol y habilitá el acceso.
+                        Cambiá permisos, desactivá cuentas o reactivá las que estén inactivas.
                     </p>
                 </div>
                 <button className="secondary-button" onClick={() => void cargarUsuarios()} disabled={cargando}>
@@ -137,8 +190,8 @@ export default function Users() {
             <section className="panel data-panel">
                 <div className="panel-heading">
                     <div>
-                        <h2>Solicitudes pendientes ({pendientes.length})</h2>
-                        <p>Al aprobar una solicitud, la persona recibirá un correo de aviso.</p>
+                        <h2>Cuentas inactivas ({inactivos.length})</h2>
+                        <p>Al aprobar una cuenta se reactiva el acceso y se envía un correo de aviso.</p>
                     </div>
                     <UsersIcon size={27} />
                 </div>
@@ -156,7 +209,7 @@ export default function Users() {
                                     <th>Nombre</th>
                                     <th>Correo</th>
                                     <th>Estado</th>
-                                    <th>Rol</th>
+                                    <th>Permisos (rol)</th>
                                     <th></th>
                                 </tr>
                             </thead>
@@ -167,28 +220,22 @@ export default function Users() {
                                         <td>{usuario.email}</td>
                                         <td>
                                             <span className={`status ${usuario.activo ? "status-en-proceso" : ""}`}>
-                                                {usuario.activo ? "Activo" : "Pendiente"}
+                                                {usuario.activo ? "Activo" : "Inactivo"}
                                             </span>
                                         </td>
                                         <td>
-                                            {usuario.activo ? (
-                                                roles.find((role) => role.value === usuario.rol)?.label ?? usuario.rol
+                                            {usuario.id === miId ? (
+                                                <span className="muted">Administrador (fijo)</span>
                                             ) : (
                                                 <select
                                                     className="text-input"
-                                                    aria-label={`Rol para ${usuario.nombre}`}
-                                                    value={rolesSeleccionados[usuario.id] ?? "presupuestista"}
-                                                    onChange={(event) => {
-                                                        const selectedRole = roles.find(
-                                                            (role) => role.value === event.target.value,
-                                                        );
-                                                        if (selectedRole) {
-                                                            setRolesSeleccionados((current) => ({
-                                                                ...current,
-                                                                [usuario.id]: selectedRole.value,
-                                                            }));
-                                                        }
-                                                    }}
+                                                    aria-label={`Permisos de ${usuario.nombre}`}
+                                                    value={rolesSeleccionados[usuario.id] ?? usuario.rol}
+                                                    onChange={(event) => void cambiarRol(
+                                                        usuario,
+                                                        event.target.value as Rol,
+                                                    )}
+                                                    disabled={procesandoId !== null}
                                                 >
                                                     {roles.map((role) => (
                                                         <option key={role.value} value={role.value}>
@@ -199,16 +246,28 @@ export default function Users() {
                                             )}
                                         </td>
                                         <td>
-                                            {!usuario.activo && (
+                                            {usuario.activo ? (
+                                                <button
+                                                    className="secondary-button"
+                                                    onClick={() => void desactivar(usuario)}
+                                                    disabled={usuario.id === miId || procesandoId !== null}
+                                                    title={usuario.id === miId ? "No podés desactivar tu propia cuenta" : "Desactivar cuenta"}
+                                                >
+                                                    {procesandoId === usuario.id
+                                                        ? <Spinner size={16} />
+                                                        : null}
+                                                    Desactivar
+                                                </button>
+                                            ) : (
                                                 <button
                                                     className="primary-button"
                                                     onClick={() => void aprobar(usuario)}
                                                     disabled={procesandoId !== null}
                                                 >
                                                     {procesandoId === usuario.id
-                                                        ? <LoaderCircle className="spin" size={17} />
+                                                        ? <Spinner size={17} />
                                                         : <Check size={17} />}
-                                                    Aprobar
+                                                    Activar
                                                 </button>
                                             )}
                                         </td>
