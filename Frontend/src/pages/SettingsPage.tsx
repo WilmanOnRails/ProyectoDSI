@@ -1,7 +1,14 @@
-import { useEffect, useState } from "react";
-import { Settings } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { isAxiosError } from "axios";
+import { Settings, UserRound } from "lucide-react";
 import api, { apiGet } from "../services/api";
-import { canManagePlatformData } from "../services/authSession";
+import { updateMyProfile } from "../services/auth";
+import {
+  canManagePlatformData,
+  getAuthSession,
+  getRoleLabel,
+  updateAuthSessionUser,
+} from "../services/authSession";
 
 type Config = {
   empresa?: string;
@@ -27,6 +34,17 @@ const CAMPOS_PORCENTAJE = [
 
 export default function SettingsPage() {
   const canEdit = canManagePlatformData();
+  const [profile, setProfile] = useState(() => ({
+    nombre: getAuthSession()?.user.nombre ?? "",
+    email: getAuthSession()?.user.email ?? "",
+    rol: getAuthSession()?.user.rol ?? "",
+  }));
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileMessage, setProfileMessage] = useState("");
+  const [profileError, setProfileError] = useState("");
   const [form, setForm] = useState<Config>({
     moneda: "NIO",
     pctIndirectosDef: 5,
@@ -59,6 +77,45 @@ export default function SettingsPage() {
     }
   };
 
+  const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (savingProfile) return;
+    if ((newPassword || confirmPassword) && newPassword !== confirmPassword) {
+      setProfileError("La nueva contraseña y su confirmación no coinciden.");
+      setProfileMessage("");
+      return;
+    }
+
+    setSavingProfile(true);
+    setProfileError("");
+    setProfileMessage("");
+    try {
+      const user = await updateMyProfile({
+        nombre: profile.nombre,
+        email: profile.email,
+        currentPassword,
+        ...(newPassword ? { newPassword } : {}),
+      });
+      setProfile({ nombre: user.nombre, email: user.email, rol: user.rol });
+      updateAuthSessionUser(user);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setProfileMessage("Tu cuenta fue actualizada correctamente.");
+    } catch (error: unknown) {
+      const message = isAxiosError<{ message?: string }>(error)
+        ? error.response?.data?.message
+        : undefined;
+      setProfileError(
+        typeof message === "string"
+          ? message
+          : "No se pudo actualizar tu cuenta. Inténtalo de nuevo.",
+      );
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
   return (
     <>
       <div className="page-heading">
@@ -72,6 +129,107 @@ export default function SettingsPage() {
         </div>
         <Settings size={28} />
       </div>
+
+      <section className="panel settings-card">
+        <h2>
+          <UserRound size={18} /> Mi cuenta
+        </h2>
+        <p className="muted">
+          Actualiza tu nombre o correo. Para guardar cambios debes confirmar tu
+          contraseña actual; el rol solo puede cambiarlo un administrador.
+        </p>
+        <form
+          className="settings-grid"
+          onSubmit={(event) => void saveProfile(event)}
+        >
+          <label>
+            Nombre
+            <input
+              className="text-input"
+              value={profile.nombre}
+              onChange={(event) =>
+                setProfile({ ...profile, nombre: event.target.value })
+              }
+              required
+              maxLength={120}
+            />
+          </label>
+          <label>
+            Correo
+            <input
+              className="text-input"
+              type="email"
+              value={profile.email}
+              onChange={(event) =>
+                setProfile({ ...profile, email: event.target.value })
+              }
+              required
+              maxLength={254}
+            />
+          </label>
+          <label>
+            Rol asignado
+            <input
+              className="text-input"
+              value={getRoleLabel(profile.rol)}
+              readOnly
+            />
+          </label>
+          <label>
+            Contraseña actual
+            <input
+              className="text-input"
+              type="password"
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              autoComplete="current-password"
+              minLength={1}
+              maxLength={72}
+              required
+            />
+          </label>
+          <label>
+            Nueva contraseña (opcional)
+            <input
+              className="text-input"
+              type="password"
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              autoComplete="new-password"
+              minLength={8}
+              maxLength={72}
+            />
+          </label>
+          <label>
+            Confirmar nueva contraseña
+            <input
+              className="text-input"
+              type="password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              autoComplete="new-password"
+              minLength={8}
+              maxLength={72}
+              required={Boolean(newPassword)}
+            />
+          </label>
+          <div>
+            <button
+              className="primary-button"
+              type="submit"
+              disabled={savingProfile}
+            >
+              {savingProfile ? "Guardando..." : "Guardar cambios de cuenta"}
+            </button>
+          </div>
+        </form>
+        {profileMessage && <div className="import-success">{profileMessage}</div>}
+        {profileError && (
+          <div className="import-error" role="alert">
+            {profileError}
+          </div>
+        )}
+      </section>
 
       <section className="panel settings-card">
         <h2>Datos del emisor</h2>

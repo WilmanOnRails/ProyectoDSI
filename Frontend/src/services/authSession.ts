@@ -84,8 +84,35 @@ export function saveAuthSession(session: AuthSession, remember: boolean) {
     notifySessionChange();
 }
 
+export function updateAuthSessionUser(user: AuthenticatedUser) {
+    const session = getAuthSession();
+    if (!session) return;
+
+    const storage = localStorage.getItem(SESSION_KEY) !== null
+        ? localStorage
+        : sessionStorage;
+    storage.setItem(SESSION_KEY, JSON.stringify({ ...session, user }));
+    notifySessionChange();
+}
+
 export function getAuthSession(): AuthSession | null {
     return readSession(localStorage) ?? readSession(sessionStorage);
+}
+
+export function getUserInitials(nombre: string): string {
+    const parts = nombre.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+export function getRoleLabel(role: string): string {
+    const labels: Record<string, string> = {
+        administrador: "Administrador",
+        presupuestista: "Presupuestista",
+        solo_lectura: "Solo lectura",
+    };
+    return labels[role] ?? role;
 }
 
 export function getAuthToken(): string | null {

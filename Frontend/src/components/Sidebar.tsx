@@ -1,4 +1,5 @@
 
+import { useEffect, useState } from "react";
 import {
     LayoutDashboard,
     FolderKanban,
@@ -11,7 +12,12 @@ import {
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { apiGet } from "../services/api";
-import { getAuthSession } from "../services/authSession";
+import {
+    AUTH_SESSION_EVENT,
+    getAuthSession,
+    getRoleLabel,
+    getUserInitials,
+} from "../services/authSession";
 
 const navigation = [
     { label: "Dashboard", path: "/", icon: LayoutDashboard },
@@ -69,7 +75,15 @@ function precargarPagina(path: string) {
 }
 
 export default function Sidebar() {
-    const isAdmin = getAuthSession()?.user.rol === "administrador";
+    const [session, setSession] = useState(getAuthSession);
+    useEffect(() => {
+        const refreshSession = () => setSession(getAuthSession());
+        window.addEventListener(AUTH_SESSION_EVENT, refreshSession);
+        return () => window.removeEventListener(AUTH_SESSION_EVENT, refreshSession);
+    }, []);
+
+    const user = session?.user;
+    const isAdmin = user?.rol === "administrador";
     const menuItems = isAdmin
         ? [...navigation, { label: "Usuarios", path: "/usuarios", icon: UserRound }]
         : navigation;
@@ -118,10 +132,10 @@ export default function Sidebar() {
                 </NavLink>
 
                 <div className="profile">
-                    <div className="avatar">AD</div>
+                    <div className="avatar">{getUserInitials(user?.nombre ?? "")}</div>
                     <div>
-                        <strong>Administrador</strong>
-                        <span>Panel de gestión</span>
+                        <strong>{user?.nombre ?? "Usuario"}</strong>
+                        <span>{getRoleLabel(user?.rol ?? "")}</span>
                     </div>
                 </div>
             </div>

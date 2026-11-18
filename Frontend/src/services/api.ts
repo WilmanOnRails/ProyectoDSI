@@ -13,6 +13,7 @@ const apiBaseUrl = (import.meta.env.VITE_API_URL || "http://localhost:3000/api")
   .replace(/\/+$/, "")
   .replace(/\/api(?:\/v1)?$/, "");
 
+
 const api = axios.create({
   baseURL: `${apiBaseUrl}/api`,
   headers: {

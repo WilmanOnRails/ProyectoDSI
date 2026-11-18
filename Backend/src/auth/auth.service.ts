@@ -5,6 +5,7 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -12,6 +13,7 @@ import { JwtService } from '@nestjs/jwt';
 import { createHash, randomBytes } from 'node:crypto';
 import { LoginDto } from './dto/login.dto.js';
 import { RegisterDto } from './dto/register.dto.js';
+import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import * as bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
@@ -109,6 +111,70 @@ export class AuthService {
         rol: user.rol,
       },
     };
+  }
+
+  async updateProfile(userId: string, data: UpdateProfileDto) {
+    if (
+      data.nombre === undefined &&
+      data.email === undefined &&
+      data.newPassword === undefined
+    ) {
+      throw new BadRequestException('Indica al menos un dato para actualizar');
+    }
+
+    const user = await this.prisma.usuario.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('El usuario de la sesión ya no existe');
+    }
+
+    const passwordMatches = await bcrypt.compare(
+      data.currentPassword,
+      user.passwordHash,
+    );
+    if (!passwordMatches) {
+      throw new BadRequestException('La contraseña actual no es correcta');
+    }
+
+    const updateData: Prisma.UsuarioUpdateInput = {};
+    if (data.nombre !== undefined) updateData.nombre = data.nombre;
+    if (data.email !== undefined) updateData.email = data.email;
+    if (data.newPassword !== undefined) {
+      updateData.passwordHash = await bcrypt.hash(data.newPassword, 10);
+    }
+
+    try {
+      return await this.prisma.$transaction(async (transaction) => {
+        const updatedUser = await transaction.usuario.update({
+          where: { id: userId },
+          data: updateData,
+          select: {
+            id: true,
+            nombre: true,
+            email: true,
+            rol: true,
+          },
+        });
+
+        if (data.newPassword !== undefined) {
+          await transaction.passwordResetToken.deleteMany({
+            where: { usuarioId: userId },
+          });
+        }
+
+        return updatedUser;
+      });
+    } catch (error: unknown) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('Ya existe una cuenta con ese correo');
+      }
+      throw error;
+    }
   }
 
   async forgotPassword(email: string): Promise<{ message: string }> {

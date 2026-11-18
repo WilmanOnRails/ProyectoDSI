@@ -1,5 +1,5 @@
 import api from "./api";
-import type { AuthSession } from "./authSession";
+import type { AuthenticatedUser, AuthSession } from "./authSession";
 
 export async function login(email: string, password: string): Promise<AuthSession> {
     const response = await api.post<AuthSession>("/auth/login", { email, password });
@@ -25,4 +25,14 @@ export async function requestPasswordReset(email: string): Promise<void> {
 
 export async function resetPassword(token: string, password: string): Promise<void> {
     await api.post("/auth/reset-password", { token, password });
+}
+
+export async function updateMyProfile(data: {
+    nombre: string;
+    email: string;
+    currentPassword: string;
+    newPassword?: string;
+}): Promise<AuthenticatedUser> {
+    const response = await api.patch<AuthenticatedUser>("/auth/me", data);
+    return response.data;
 }

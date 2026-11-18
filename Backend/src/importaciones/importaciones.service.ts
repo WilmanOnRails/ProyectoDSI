@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-} from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
@@ -16,32 +12,16 @@ import {
   crearApuAutomaticoEnTransaccion,
 } from '../apus/apu-automatico.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { extraerDatosPliegoGenerico } from './pliego-parser.js';
 
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse') as (
   buffer: Buffer,
 ) => Promise<{ numpages: number; text: string }>;
 
-type ActividadExtraida = {
-  capituloCodigo: string;
-  capituloNombre: string;
-  codigoOrigen: string;
-  descripcion: string;
-  cantidad: Prisma.Decimal;
-  unidad: string;
-};
-
-type DatosPliego = {
-  nombreProyecto: string;
-  cliente: string;
-  actividades: ActividadExtraida[];
-};
-
 @Injectable()
 export class ImportacionesService {
-  private readonly logger = new Logger(ImportacionesService.name);
-
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async importarPliegoPdf(
     contenido: Buffer,
@@ -61,12 +41,18 @@ export class ImportacionesService {
       );
     }
 
-    const pliego = this.extraerDatosPliego(texto);
-    if (pliego.actividades.length === 0) {
+    // Un escaneo casi no trae texto: mejor avisar antes de intentar extraer.
+    if (texto.replace(/\s/g, '').length < paginas * 50) {
       throw new BadRequestException(
-        'No se encontraron actividades en la sección DESGLOSE DE ALCANCES del PDF.',
+        'El PDF parece un escaneo y no trae texto legible.',
       );
     }
+
+    const pliego = extraerDatosPliegoGenerico(
+      texto,
+      nombreArchivo,
+      nombrePresupuesto,
+    );
 
     // Cada carga es independiente. El identificador evita chocar con el campo
     // único Actividad.codigo, incluso si se importa nuevamente el mismo PDF.
@@ -215,6 +201,7 @@ export class ImportacionesService {
         'Pliego importado correctamente. Se generaron APUs de referencia o aproximados, editables antes de aprobar el presupuesto.',
       archivo: nombreArchivo,
       paginasProcesadas: paginas,
+      filasOmitidas: pliego.filasOmitidas ?? 0,
       proyecto: resultado.proyecto,
       presupuesto: {
         ...resultado.presupuesto,
@@ -224,143 +211,4 @@ export class ImportacionesService {
     };
   }
 
-  private extraerDatosPliego(texto: string): DatosPliego {
-    const inicio = texto.search(/DESGLOSE\s+DE\s+ALCANCES/i);
-    if (inicio === -1) {
-      throw new BadRequestException(
-        'El PDF no contiene la sección DESGLOSE DE ALCANCES.',
-      );
-    }
-
-    const desdeAlcances = texto.slice(inicio);
-    const finMatriz = desdeAlcances.search(/MATRIZ\s+DE\s+EVALUACI[ÓO]N\s+T[ÉE]CNICA/i);
-    const seccion =
-      finMatriz === -1 ? desdeAlcances : desdeAlcances.slice(0, finMatriz);
-
-    const nombreProyecto = this.buscarNombreProyecto(seccion);
-    const cliente = /ALCALD[IÍ]A\s+MUNICIPAL\s+DE\s+([^\n\r]+)/i.exec(seccion)?.[0]
-      ?.replace(/\s+/g, ' ')
-      .trim() ?? 'No especificado';
-
-    const lineas = seccion
-      .replace(/PLIEGO\s+de\s+Bases\s+y\s+Condiciones\s+P[aá]gina\s+\d+\s+de\s+\d+/gi, '')
-      .split(/\r?\n/)
-      .map((linea) => linea.replace(/\s+/g, ' ').trim())
-      .filter(Boolean);
-
-    const actividades = this.extraerActividades(lineas);
-    return { nombreProyecto, cliente, actividades };
-  }
-
-  private buscarNombreProyecto(seccion: string): string {
-    const coincidencia = /ALCANCES\s+DEL\s+PROYECTO\s*:\s*([^\n\r]+)/i.exec(
-      seccion,
-    );
-    if (!coincidencia?.[1]) {
-      throw new BadRequestException(
-        'No se encontró el nombre del proyecto dentro del DESGLOSE DE ALCANCES.',
-      );
-    }
-
-    return coincidencia[1].replace(/\s+/g, ' ').trim();
-  }
-
-  private extraerActividades(lineas: string[]): ActividadExtraida[] {
-    const actividades: ActividadExtraida[] = [];
-    let capituloCodigo = '';
-    let capituloNombre = '';
-    let codigoActividad: string | null = null;
-    let contenidoActividad: string[] = [];
-
-    const guardarActividad = () => {
-      if (!codigoActividad || !capituloCodigo) return;
-
-      const textoActividad = contenidoActividad.join(' ').replace(/\s+/g, ' ').trim();
-      const coincidenciaFinal = /(?:^|\s)([\d,.]+)\s+([A-Za-zÁÉÍÓÚáéíóúñÑ0-9²³]+)\s*$/.exec(
-        textoActividad,
-      );
-
-      if (!coincidenciaFinal) {
-        this.logger.warn(
-          `No se pudo extraer cantidad y unidad de la actividad ${capituloCodigo}-${codigoActividad}`,
-        );
-        return;
-      }
-
-      const cantidad = this.convertirCantidad(coincidenciaFinal[1]);
-      const descripcion = textoActividad
-        .slice(0, coincidenciaFinal.index)
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      if (!descripcion || cantidad.lte(0)) {
-        this.logger.warn(
-          `La actividad ${capituloCodigo}-${codigoActividad} no tiene descripción o cantidad válida`,
-        );
-        return;
-      }
-
-      actividades.push({
-        capituloCodigo,
-        capituloNombre,
-        codigoOrigen: codigoActividad,
-        descripcion,
-        cantidad,
-        unidad: coincidenciaFinal[2],
-      });
-    };
-
-    for (const linea of lineas) {
-      if (/^(?:ÍTEM|ITEM)\s+DESCRIPCI[ÓO]N\s+CANT\s+U\/M$/i.test(linea)) {
-        continue;
-      }
-
-      const capitulo = /^(\d{3})\s+(.+)$/.exec(linea);
-      if (
-        capitulo &&
-        ['010', '020', '030', '040', '050', '060', '070', '080'].includes(
-          capitulo[1],
-        )
-      ) {
-        guardarActividad();
-        codigoActividad = null;
-        contenidoActividad = [];
-        capituloCodigo = capitulo[1];
-        capituloNombre = capitulo[2].trim();
-        continue;
-      }
-
-      const inicioActividad = /^(\d{3})\s+(.+)$/.exec(linea);
-      if (inicioActividad && capituloCodigo) {
-        guardarActividad();
-        codigoActividad = inicioActividad[1];
-        contenidoActividad = [inicioActividad[2]];
-        continue;
-      }
-
-      const codigoSolo = /^(\d{3})$/.exec(linea);
-      if (codigoSolo && capituloCodigo) {
-        guardarActividad();
-        codigoActividad = codigoSolo[1];
-        contenidoActividad = [];
-        continue;
-      }
-
-      if (codigoActividad) {
-        contenidoActividad.push(linea);
-      }
-    }
-
-    guardarActividad();
-    return actividades;
-  }
-
-  private convertirCantidad(valor: string): Prisma.Decimal {
-    const normalizado = valor.replace(/,/g, '');
-    const cantidad = new Prisma.Decimal(normalizado);
-    if (!cantidad.isFinite()) {
-      throw new BadRequestException(`Cantidad inválida encontrada: ${valor}`);
-    }
-    return cantidad;
-  }
 }

@@ -1,8 +1,14 @@
 
+import { useEffect, useState } from "react";
 import { Bell, LogOut, Search } from "lucide-react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
-import { clearAuthSession } from "../services/authSession";
+import {
+    AUTH_SESSION_EVENT,
+    clearAuthSession,
+    getAuthSession,
+    getUserInitials,
+} from "../services/authSession";
 
 const pageTitles: Record<string, string> = {
     "/": "Dashboard",
@@ -18,6 +24,13 @@ export default function DashboardLayout() {
     const { pathname } = useLocation();
     const navigate = useNavigate();
     const title = pageTitles[pathname] ?? "ObraControl";
+    const [session, setSession] = useState(getAuthSession);
+
+    useEffect(() => {
+        const refreshSession = () => setSession(getAuthSession());
+        window.addEventListener(AUTH_SESSION_EVENT, refreshSession);
+        return () => window.removeEventListener(AUTH_SESSION_EVENT, refreshSession);
+    }, []);
 
     function handleLogout() {
         clearAuthSession();
@@ -50,7 +63,9 @@ export default function DashboardLayout() {
                         >
                             <LogOut size={19} />
                         </button>
-                        <div className="topbar-user">AD</div>
+                        <div className="topbar-user">
+                            {getUserInitials(session?.user.nombre ?? "")}
+                        </div>
                     </div>
                 </header>
 
